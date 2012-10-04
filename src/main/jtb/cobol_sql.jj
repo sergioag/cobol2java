@@ -1,0 +1,4324 @@
+/*****************************************************************************
+	Copyright 2009 Venkat Krishnamurthy
+	This file is part of RES.
+	
+	RES is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+	
+	RES is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+	
+	You should have received a copy of the GNU General Public License
+	along with RES.  If not, see <http://www.gnu.org/licenses/>.
+	
+  	<p>History:<ul>
+  	<li><date>October-2009 through January-2010</date> 
+  		EXEC SQL support 
+  		Many LOOKAHEADs and related changes<ol>
+  	<li><date>September-2009</date> Added PICTURE_STATE for PICTURE<ol>
+  	<li><date>September-2009</date> Added PICTURE_STRING as a single Token <ol>
+  	<li><date>August-2009</date> Added Preprocessor Line as Special Token <ol>
+  	<li><date>July-2009</date> Reworked ADD Statement for clarity <ol>
+  	<li><date>June-2009</date> Wrote a user-char-stream for processing preprocessor directives <ol>
+  	<li><date>June-2009</date> Added RES Token option and Token-Mgr-Decls <ol>
+ 	<li><date>April-2009</date> Built with JTB correctly.Changed options <ol>
+ 	<li><date>March-2009</date> Reworked PERFORM Statement correctly<ol>
+	</ul>
+		
+******************************************************************************/
+/**
+ * This is an experimental COBOL-85 grammar for JavaCC.
+ * <p>References used for this grammar :<ol>
+ * <li> Ralf L�mmel & Chris Verhoef : VS COBOL II grammar Version 1.0.3
+ * <li> Fujitsu Cobol compiler reference
+ * <li> Compaq-HP Non-stop Cobol reference
+ * </od>
+ * <p>This grammar is released under the GNU Library Public License (LGPL).
+ * <p><address>Bernard Pinon, august 2002</address>
+ * @see http://www.gnu.org/licenses/lgpl.html
+ * @see http://www.cwi.nl/
+ * @see http://www.wins.uva.nl/
+ * @author Bernard Pinon (bpinon at benjamin dash media dot com)
+ *
+ * <p>History:<ul>
+ * <li><date>9-aug-2002</date> [BP] make changes to comply with JTB :<ol>
+ * <li> Changed Integer() to IntegerConstant() to avoid conflicts with java.lang.Integer
+ * <li> Removed Java code to make the grammar bare bone
+ * <li> Fixed Identification Division entries
+ * </ol>
+ * <li><date>8-aug-2002</date> [BP] fixed several bugs :<ol>
+ *   <li> INSTALLATION section
+ *   <li> wrong spelling in keywords
+ *   <li> DOT missing in FD/SD entries
+ *   <li> wrong regular expressions for levels
+ *   <li> possibility to have repeated string literals, e.g. "AA" "BB" -> "AABB"
+ *   <li> optimized data division by placing the most common clauses first
+ *   <li> DOT missing in exit statement
+ *   <li> confusion between Identifier and QualifiedDataName (to be checked)
+ *   <li> fixed NumericConstant to use Integer instead of INTEGER
+ *   <li> Correcting AdvancingPhrase so LINE is optional
+ *   <li> Fixed problems with abbreviated conditions
+ *   <li> Fixed Add statement
+ *   </ol>
+ * </ul>
+ */
+
+/**
+ * Cobol is not case sensitive. It is not LL(1) neither...
+ */
+
+options {
+	STATIC = false;
+	BUILD_PARSER = true;
+  	IGNORE_CASE = true;
+	//FORCE_LA_CHECK = true;
+	LOOKAHEAD = 2;
+	DEBUG_PARSER = true;
+	//DEBUG_LOOKAHEAD = true;
+	//DEBUG_TOKEN_MANAGER = true;
+	COMMON_TOKEN_ACTION = true;
+	USER_CHAR_STREAM = true;
+	TOKEN_EXTENDS = "com.res.cobol.RESToken";
+}
+
+/**
+ * The parser class.
+ */
+
+PARSER_BEGIN(CobolParser)
+package com.res.cobol.parser;
+import com.res.common.RESConfig;
+
+public class CobolParser {
+
+private boolean notFollowedByEndExec() {
+	int i=1;
+	while(getToken(i).kind==COBOL_WORD||getToken(i).kind==IN||getToken(i).kind==OF) {
+		i=skipSubscripts(++i);
+		if(getToken(i).kind==PLUSCHAR||getToken(i).kind==MINUSCHAR||getToken(i).kind==ASTERISKCHAR||getToken(i).kind==SLASHCHAR)
+			return false;
+	}
+	return true;
+}
+
+private boolean notFollowedByOp() {
+	int i=1;Token t;
+	while(canBeIdentifierOrNumber(t=getToken(i))) {
+		i=skipSubscripts(++i);
+		if((t=getToken(i)).kind==PLUSCHAR||t.kind==PLUSCHAR_SUBS
+			||t.kind==MINUSCHAR_SUBS		
+			||t.kind==ASTERISKCHAR||t.kind==SLASHCHAR)
+			return false;
+	}
+	return true;
+}
+private boolean notFollowedByRelOp() {
+	int i=1;Token t;
+	while(canBeIdentifierOrNumber(t=getToken(i))) {
+		i=skipSubscripts(++i);
+		if((t=getToken(i)).kind==LESSTHANCHAR||t.kind==MORETHANCHAR||t.kind==GREATER||t.kind==LESS
+			||t.kind==EQUALCHAR||t.kind==EQUAL||t.kind==EQUALS||t.kind==EQUALS
+			||t.kind==NOTEQUALCHAR||t.kind==NOT)
+			return false;
+	}
+	return true;
+}
+private boolean canBeIdentifierOrNumber(Token t) {
+	return t.kind==COBOL_WORD||t.kind==IN||t.kind==OF||t.kind==IS||
+	 t.kind==LEVEL_66 || t.kind==LEVEL_77 || t.kind==LEVEL_78 || t.kind==LEVEL_88 ||
+	  t.kind==LEVEL_NUMBER || t.kind==INTEGER || t.kind==COMMA_INTEGER||
+	  t.kind==MINUSCHAR||t.kind==MINUSCHAR_SUBS||t.kind==LPARENCHAR
+	  ||t.kind==DOTCHAR;
+}
+
+private int skipSubscripts(int i) {
+	if(getToken(i).kind==LPARENCHAR) {
+		while(getToken(++i).kind!=RPARENCHAR&&getToken(i).kind!=DOT)
+			;
+			if(getToken(++i).kind==RPARENCHAR) i++;
+	}
+	return i;
+}
+
+class SkipToEndExec extends NodeList {
+
+   public SkipToEndExec(NodeList n0) {
+   		super();
+   		super.nodes.addAll(n0.nodes);
+	    if ( n0 != null ) super.setParent(this);
+   }
+
+   public SkipToEndExec() {}
+
+   public void accept(com.res.cobol.visitor.Visitor v) {
+      v.visit(this);
+   }
+
+   public void setParent(Node n) { super.setParent(n); }
+   
+   public Node getParent()       { return super.getParent(); }
+   
+}
+
+
+}
+
+PARSER_END(CobolParser)
+
+////////////////////////////////////////////////////////////////////////////////
+// Lexical structure
+////////////////////////////////////////////////////////////////////////////////
+
+  < DEFAULT , FUNCTION_STATE , EXEC_STATE , IN_COMMENT2 > SPECIAL_TOKEN :
+{
+  <EOL: "\n" >
+| <SPACECHAR: ( " " | "\t" | "\f" | ";" | "\r" )+ >
+|  < #LETTER:
+      [
+       "\u0024",
+       "\u0041"-"\u005a",
+       "\u005f",
+       "\u0061"-"\u007a",
+       "\u00c0"-"\u00d6",
+       "\u00d8"-"\u00f6",
+       "\u00f8"-"\u00ff",
+       "\u0100"-"\u1fff",
+       "\u3040"-"\u318f",
+       "\u3300"-"\u337f",
+       "\u3400"-"\u3d2d",
+       "\u4e00"-"\u9fff",
+       "\uf900"-"\ufaff"
+      ]
+  >
+|
+  < #DIGIT:
+      [
+       "\u0030"-"\u0039",
+       "\u0660"-"\u0669",
+       "\u06f0"-"\u06f9",
+       "\u0966"-"\u096f",
+       "\u09e6"-"\u09ef",
+       "\u0a66"-"\u0a6f",
+       "\u0ae6"-"\u0aef",
+       "\u0b66"-"\u0b6f",
+       "\u0be7"-"\u0bef",
+       "\u0c66"-"\u0c6f",
+       "\u0ce6"-"\u0cef",
+       "\u0d66"-"\u0d6f",
+       "\u0e50"-"\u0e59",
+       "\u0ed0"-"\u0ed9",
+       "\u1040"-"\u1049"
+      ]
+  >
+}
+< DEFAULT , FUNCTION_STATE , EXEC_STATE , IN_COMMENT2  > SPECIAL_TOKEN :
+{
+  <COMMENT: "*>" (~["\n","\r"])* >
+| <SQL_COMMENT : "/*" (~[])* "*/" >
+| < SPACE_SEPARATOR : ( <SPACECHAR> | <EOL> )+ >
+}
+
+< EXEC_PROC_STATE > SPECIAL_TOKEN :
+{
+ <SPACECHAR2: ( " " | "\t" | "\f" | "\r" | "\n"  )+ >
+}
+< EXEC_STATE , DEFAULT > TOKEN :
+{
+ < DOTCHAR: "." > 
+}
+TOKEN :
+ {
+  <DOT : ("." <SPACE_SEPARATOR>) > }
+
+TOKEN:
+{
+ < EXEC: "exec" > : EXEC_STATE
+| < EXECUTE: "execute" > : EXEC_STATE
+}
+<  EXEC_STATE   > TOKEN:
+{
+  < END_EXEC: "end-exec" > : DEFAULT
+}
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+// RESERVED WORDS. Looks like an excerpt of the dictionary of data processing.
+// It is very hard to find significative identifiers in COBOL that are not
+// reserved...
+////////////////////////////////////////////////////////////////////////////////
+
+TOKEN :
+{
+
+/* A */
+  < ACCEPT: "accept" >
+| < ACCESS: "access" >
+| < ADD: "add" >
+| < ADDRESS: "address" > // extension to support pointers
+| < ADVANCING: "advancing" >
+| < AFTER: "after" >
+| < ALL: "all" >
+| < ALPHABET: "alphabet" >
+| < ALPHABETIC: "alphabetic" >
+| < ALPHABETIC_LOWER: "alphabetic-lower" >
+| < ALPHABETIC_UPPER: "alphabetic-upper" >
+| < ALPHANUMERIC: "alphanumeric" >
+| < ALPHANUMERIC_EDITED: "alphanumeric-edited" >
+| < ALSO: "also" >
+| < ALTER: "alter" >
+| < ALTERNATE: "alternate" >
+| < AND: "and" >
+| < ANY: "any" >
+| < APPROXIMATE: "approximate" > // tandem extension
+| < ARE: "are" >
+| < AREA: "area" >
+| < AREAS: "areas" >
+| < ASCENDING: "ascending" >
+| < ASSIGN: "assign" >
+| < AT: "at" >
+| < AUTHOR: "author" > : IN_COMMENT2
+/* B */
+| < BEFORE: "before" >
+| < BEGINNING: "beginning" > // extension
+| < BINARY: "binary" >
+| < BLANK: "blank" >
+| < BLOCK: "block" >
+| < BOTTOM: "bottom" >
+| < BY: "by" >
+/* C */
+| < CALL: "call" >
+| < CANCEL: "cancel" >
+| < CD: "cd" >
+| < CF: "cf" >
+| < CH: "ch" >
+| < CHARACTER: "character">
+| < CHARACTERS: "characters">
+| < CLASS: "class" >
+| < CLOCK_UNITS: "clock-units" >
+| < CLOSE: "close" >
+| < COBOL: "cobol" >
+| < CODE: "code" >
+| < CODE_SET: "code-set" >
+| < COLLATING: "collating" >
+| < COLUMN: "column" >
+| < COMMA: "comma" >
+| < COMMON: "common" >
+| < COMMUNICATION: "communication" >
+| < COMP: "comp" >
+| < COMP_1: "comp-1" > // extension in many dialects
+| < COMP_2: "comp-2" > // extension in many dialects
+| < COMP_3: "comp-3" > // extension in many dialects
+| < COMP_4: "comp-4" > // extension in many dialects
+| < COMP_5: "comp-5" > // extension in many dialects
+| < COMPUTATIONAL: "computational" >
+| < COMPUTATIONAL_1: "computational-1" > // extension
+| < COMPUTATIONAL_2: "computational-2" > // extension
+| < COMPUTATIONAL_3: "computational-3" > // extension
+| < COMPUTATIONAL_4: "computational-4" > // extension
+| < COMPUTATIONAL_5: "computational-5" > // extension
+| < COMPUTE: "compute" >
+| < CONFIGURATION: "configuration" >
+| < CONTAINS: "contains" >
+| < CONTENT: "content" >
+| < CONTINUE: "continue" >
+| < CONTROL: "control" >
+| < CONTROLS: "controls" >
+| < CONVERTING: "converting" >
+| < COPY: "copy" >
+| < CORR: "corr" >
+| < CORRESPONDING: "corresponding" >
+| < COUNT: "count" >
+| < CURRENCY: "currency" >
+/* D */
+| < DATA: "data" >
+| < DATE: "date" >
+| < DATE_COMPILED: "date-compiled" > :IN_COMMENT2
+| < DATE_WRITTEN: "date-written" > :IN_COMMENT2
+| < DAY: "day" >
+| < DAY_OF_WEEK: "day-of-week" >
+| < DBCS: "dbcs" > // extension to support double bytes characters
+| < DE: "de" >
+| < DEBUG_CONTENTS: "debug-contents" >
+| < DEBUG_ITEM: "debug-item" >
+| < DEBUG_LINE: "debug-line" >
+| < DEBUG_NAME: "debug-name" >
+| < DEBUG_SUB_1: "debug-sub-1" >
+| < DEBUG_SUB_2: "debug-sub-2" >
+| < DEBUG_SUB_3: "debug-sub-3" >
+| < DEBUGGING: "debugging" >
+| < DECIMAL_POINT: "decimal-point" >
+| < DECLARATIVES: "declaratives" >
+| < DELETE: "delete" >
+| < DELIMITED: "delimited" >
+| < DELIMITER: "delimiter" >
+| < DEPENDING: "depending" >
+| < DESCENDING: "descending" >
+| < DESTINATION: "destination" >
+| < DETAIL: "detail" >
+| < DISABLE: "disable" >
+| < DISK: "disk" >
+| < DISPLAY: "display" >
+| < DISPLAY_1: "display-1" > // extension
+| < DIVIDE: "divide" >
+| < DIVISION: "division" >
+| < DOWN: "down" >
+| < DUPLICATES: "duplicates" >
+| < DYNAMIC: "dynamic" >
+/* E */
+| < EGCS: "egcs" > // extension
+| < EGI: "egi" >
+| < ELSE: "else" >
+| < EMI: "emi" >
+| < ENABLE: "enable" >
+| < END: "end" >
+| < END_ADD: "end-add" >
+| < END_CALL: "end-call" >
+| < END_COMPUTE: "end-compute" >
+| < END_DELETE: "end-delete" >
+| < END_DIVIDE: "end-divide" >
+| < END_EVALUATE: "end-evaluate" >
+| < END_IF: "end-if" >
+| < END_MULTIPLY: "end-multiply" >
+| < END_OF_PAGE: "end-of-page" >
+| < END_PERFORM: "end-perform" >
+| < END_READ: "end-read" >
+| < END_RECEIVE: "end-receive" >
+| < END_RETURN: "end-return" >
+| < END_REWRITE: "end-rewrite" >
+| < END_SEARCH: "end-search" >
+| < END_START: "end-start" >
+| < END_STRING: "end-string" >
+| < END_SUBTRACT: "end-subtract" >
+| < END_UNSTRING: "end-unstring" >
+| < END_WRITE: "end-write" >
+| < ENDING: "endinf" >
+| < ENTER: "enter" > // not present in all COBOLs, use CALL instead
+| < ENTRY: "entry" >
+| < ENVIRONMENT: "environment" >
+| < EOP: "eop" >
+| < EQUAL: "equal" >
+| < EQUALS: "equals" >
+| < ERROR: "error" >
+| < ESI: "esi" >
+| < EVALUATE: "evaluate" >
+| < EVERY: "every" >
+| < EXCEPTION: "exception" >
+/* | < EXCLUSIVE: "exclusive" > tandem extension */
+| < EXIT: "exit" >
+| < EXTEND: "extend" >
+| < EXTERNAL: "external" >
+/* F */
+| < FALSE: "false" >
+| < FD: "fd" >
+| < FILE: "file" >
+| < FILE_CONTROL: "file-control" >
+| < FILLER: "filler" >
+| < FINAL: "final" >
+| < FIRST: "first" >
+| < FOOTING: "footing" >
+| < FOR: "for" >
+| < FROM: "from" >
+| < FUNCTION: "function" > : FUNCTION_STATE
+| < FUNCTION_POINTER: "function-pointer" > 
+
+/* G */
+| < GENERATE: "generate" >
+| < GOBACK: "goback" > // extension
+| < GENERIC: "generic" > // tandem extension
+| < GIVING: "giving" >
+| < GLOBAL: "global" >
+| < GO: "go" >
+| < GREATER: "greater" >
+| < GROUP: "group" >
+/* H */
+| < HEADING: "heading" >
+| < HIGH_VALUE: "high-value" >
+| < HIGH_VALUES: "high-values" >
+/* I */
+| < I_O: "i-o" >
+| < I_O_CONTROL: "i-o-control" >
+| < ID: "id" > // extension, synonym for IDENTIFICATION
+| < IDENTIFICATION: "identification" >
+| < IF: "if" >
+| < IMPLICIT: "implicit" >
+| < IN: "in" >
+| < INDEX: "index" >
+| < INDEXED: "indexed" >
+| < INDICATE: "indicate" >
+| < INITIAL: "initial" >
+| < INITIALIZE: "initialize" >
+| < INITIATE: "initiate" >
+| < INPUT: "input" >
+| < INPUT_OUTPUT: "input-output" >
+| < INSPECT: "inspect" >
+| < INSTALLATION: "installation" > : IN_COMMENT2
+| < INTO: "into" >
+| < INVALID: "invalid" >
+| < IS: "is" >
+/* J */
+| < JUST: "just" >
+| < JUSTIFIED: "justified" >
+| < JUSTIFY: "justify" >
+/* K */
+| < KANJI: "kanji" > // extension to support Kanji characters (japanese)
+| < KEY: "key" >
+/* L */
+| < LABEL: "label" >
+| < LAST: "last" >
+| < LEADING: "leading" >
+| < LEFT: "left" >
+| < LENGTH: "length" >
+| < LESS: "less" >
+| < LIMIT: "limit" >
+| < LIMITS: "limits" >
+| < LINAGE: "linage" >
+| < LINAGE_COUNTER: "linage-counter" >
+| < LINE: "line" >
+| < LINES: "lines" >
+| < LINE_COUNTER: "line-counter" >
+| < LINKAGE: "linkage" >
+| < LOCK: "lock" >
+| < LOCKFILE: "lockfile" > // tandem extension
+| < LOW_VALUE: "low-value" >
+| < LOW_VALUES: "low-values" >
+/* M */
+| < MEMORY: "memory" >
+| < MERGE: "merge" >
+| < MESSAGE: "message" >
+| < MODE: "mode" >
+| < MODULES: "modules" >
+| < MORE_LABELS: "more-labels" > // IBM extension
+| < MOVE: "move" >
+| < MULTIPLE: "multiple" >
+| < MULTIPLY: "multiply" >
+/* N */
+| < NATIVE: "native" >
+| < NEGATIVE: "negative" >
+| < NEXT: "next" >
+| < NO: "no" >
+| < NOT: "not" >
+| < NULL: "null" > // tandem & IBM extension
+| < NULLS: "nulls" > // tandem & IBM extension
+| < NUMBER: "number" >
+| < NUMERIC: "numeric" >
+| < NUMERIC_EDITED: "numeric-edited" >
+/* O */
+| < OBJECT: "object" >
+| < OBJECT_COMPUTER: "object-computer" >
+| < OCCURS: "occurs" >
+| < OF: "of" >
+| < OFF: "off" >
+| < OMITTED: "omitted" >
+| < ON: "on" >
+| < OPEN: "open" >
+| < OPTIONAL: "optional" >
+| < OR: "or" >
+| < ORDER: "order" >
+| < ORGANIZATION: "organization" >
+| < OTHER: "other" >
+| < OUTPUT: "output" >
+| < OVERFLOW: "overflow" >
+/* P */
+| < PACKED_DECIMAL: "packed-decimal" >
+| < PADDING: "padding" >
+| < PAGE: "page" >
+| < PAGE_COUNTER: "page-counter" >
+| < PASSWORD: "password" >
+| < PERFORM: "perform" >
+| < PF: "pf" >
+| < PH: "ph" >
+| < PIC: "pic" > //: PICTURE_STATE
+| < PICTURE: "picture" > //: PICTURE_STATE
+| < PLUS: "plus" >
+| < POINTER: "pointer" >
+| < POSITION: "position" >
+| < POSITIVE: "positive" >
+| < PRINTING: "printing" >
+| < PROCEDURE: "procedure" >
+| < PROCEDURE_POINTER: "procedure-pointer" >
+| < PROCEDURES: "procedures" >
+| < PROCEED: "proceed" >
+| < PROGRAM: "program" >
+| < PROGRAM_ID: "program-id" >
+| < PROGRAM_STATUS: "program-status" > // tandem extension
+| < PROMPT: "prompt" > // tandem extension
+| < PROTECTED: "protected" > // tandem extension
+| < PURGE: "purge" >
+/* Q */
+| < QUEUE: "queue" >
+| < QUOTE: "quote" >
+| < QUOTES: "quotes" >
+/* R */
+| < RANDOM: "random" >
+| < RD: "rd" >
+| < READ: "read" >
+| < RECEIVE: "receive" >
+| < RECEIVE_CONTROL: "receive-control" > // tandem extension
+| < RECORD: "record" >
+| < RECORDING: "recording" > // probably IBM extension
+| < RECORDS: "records" >
+| < REDEFINES: "redefines" >
+| < REEL: "reel" >
+| < REFERENCE: "reference" >
+| < REFERENCES: "references" >
+| < RELATIVE: "relative" >
+| < RELEASE: "release" >
+| < REMAINDER: "remainder" >
+| < REMOVAL: "removal" >
+| < RENAMES: "renames" >
+| < REPLACE: "replace" >
+| < REPLACING: "replacing" >
+| < REPLY: "reply" > // tandem extension
+| < REPORT: "report" >
+| < REPORTING: "reporting" >
+| < REPORTS: "reports" >
+| < RERUN: "rerun" >
+| < RESERVE: "reserve" >
+| < RESET: "reset" >
+| < RETURN: "return" > // IBM extension - does not do what expected ;-)
+| < RETURN_CODE: "return-code" > // special register IBM
+| < RETURNED: "returned" >
+| < REVERSED: "reversed" >
+| < REWIND: "rewind" >
+| < REWRITE: "rewrite" >
+| < RF: "rf" >
+| < RH: "rh" >
+| < RIGHT: "right" >
+| < ROUNDED: "rounded" >
+| < RUN: "run" >
+/* S */
+| < SAME: "same" >
+| < SD: "sd" >
+| < SEARCH: "search" >
+| < SECTION: "section" >
+| < SECURITY: "security" > :IN_COMMENT2
+| < SEGMENT: "segment" >
+| < SEGMENT_LIMIT: "segment-limit" >
+| < SELECT: "select" >
+| < SEND: "send" >
+| < SENTENCE: "sentence" >
+| < SEPARATE: "separate" >
+| < SEQUENCE: "sequence" >
+| < SEQUENTIAL: "sequential" >
+| < SET: "set" >
+| < SHARED: "shared" > // tandem extension, should be in C2000
+| < SHIFT_IN: "shift-in" > // IBM special register
+| < SHIFT_OUT: "shift-out" > // IBM special register
+| < SIGN: "sign" >
+| < SIZE: "size" >
+| < SORT: "sort" >
+| < SORT_CONTROL: "sort-control" > // IBM special register
+| < SORT_CORE_SIZE: "sort-core-size" > // IBM special register
+| < SORT_FILE_SIZE: "sort-file-size" > // IBM special register
+| < SORT_MERGE: "sort-merge" >
+| < SORT_MESSAGE: "sort-message" > // IBM special register
+| < SORT_MODE_SIZE: "sort-mode-size" > // IBM special register
+| < SORT_RETURN: "sort-return" > // IBM special register
+| < SOURCE: "source" >
+| < SOURCE_COMPUTER: "source-computer" >
+| < SPACE: "space" >
+| < SPACES: "spaces" >
+| < SPECIAL_NAMES: "special-names" >
+| < STANDARD: "standard" >
+| < STANDARD_1: "standard-1" >
+| < STANDARD_2: "standard-2" >
+| < START: "start" >
+| < STATUS: "status" >
+| < STOP: "stop" >
+| < STRING: "string" >
+| < SUB_QUEUE_1: "sub-queue-1" >
+| < SUB_QUEUE_2: "sub-queue-2" >
+| < SUB_QUEUE_3: "sub-queue-3" >
+| < SUBTRACT: "subtract" >
+| < SUM: "sum" >
+| < SUPPRESS: "suppress" >
+| < SYMBOLIC: "symbolic" >
+| < SYNC: "sync" >
+| < SYNCHRONIZED: "synchronized" >
+/* T */
+| < TABLE: "table" >
+| < TALLY: "tally" > // IBM special register
+| < TALLYING: "tallying" >
+| < TAPE: "tape" >
+| < TERMINAL: "terminal" >
+| < TERMINATE: "terminate" >
+| < TEST: "test" >
+| < TEXT: "text" >
+| < THAN: "than" >
+| < THEN: "then" >
+| < THROUGH: "through" >
+| < THRU: "thru" >
+| < TIME: "time" >
+| < TIMES: "times" >
+| < TO: "to" >
+| < TOP: "top" >
+| < TRAILING: "trailing" >
+| < TRUE: "true" >
+| < TYPE: "type" >
+/* U */
+| < UNIT: "unit" >
+| < UNLOCK: "unlock" > // tandem extension
+| < UNLOCKFILE: "unlockfile" > // tandem again
+| < UNLOCKRECORD: "unlockrecord" > // guess what
+| < UNSTRING: "unstring" >
+| < UNTIL: "until" >
+| < UP: "up" >
+| < UPON: "upon" >
+| < USAGE: "usage" >
+| < USE: "use" >
+| < USING: "using" >
+/* V */
+| < VALUE: "value" >
+| < VALUES: "values" >
+| < VARYING: "varying" >
+/* W */
+| < WHEN: "when" >
+| < WHEN_COMPILED: "when-compiled" > // IBM special register
+| < WITH: "with" >
+| < WORDS: "words" >
+| < WORKING_STORAGE: "working-storage" >
+| < WRITE: "write" >
+/* Z */
+| < ZERO: "zero" >
+| < ZEROS: "zeros" >
+| < ZEROES: "zeroes" >
+}
+
+<FUNCTION_STATE> TOKEN :
+{
+<F_ACOS: "ACOS" > : DEFAULT |
+<F_ANNUITY: "ANNUITY" > : DEFAULT |
+<F_ASIN: "ASIN" > : DEFAULT |
+<F_ATAN: "ATAN" > : DEFAULT |
+<F_CHAR: "CHAR" > : DEFAULT |
+<F_COS: "COS" > : DEFAULT |
+<F_CURRENT_DATE: "CURRENT-DATE" > : DEFAULT |
+<F_DATE_OF_INTEGER: "DATE-OF-INTEGER" > : DEFAULT |
+<F_DATE_TO_YYYYMMDD: "DATE-TO-YYYYMMDD" > : DEFAULT |
+<F_DATEVAL: "DATEVAL" > : DEFAULT |
+<F_DAY_OF_INTEGER: "DAY-OF-INTEGER" > : DEFAULT |
+<F_DAY_TO_YYYYDDD: "DAY-TO-YYYYDDD" > : DEFAULT |
+<F_DISPLAY_OF: "DISPLAY-OF" > : DEFAULT |
+<F_FACTORIAL: "FACTORIAL" > : DEFAULT |
+<F_INTEGER: "INTEGER" > : DEFAULT |
+<F_INTEGER_OF_DATE: "INTEGER-OF-DATE" > : DEFAULT |
+<F_INTEGER_OF_DAY: "INTEGER-OF-DAY" > : DEFAULT |
+<F_INTEGER_PART: "INTEGER-PART" > : DEFAULT |
+<F_LENGTH: "LENGTH" > : DEFAULT |
+<F_LOG: "LOG" > : DEFAULT |
+<F_LOG10: "LOG10" > : DEFAULT |
+<F_LOWER_CASE: "LOWER-CASE" > : DEFAULT |
+<F_MAX: "MAX" > : DEFAULT |
+<F_MEAN: "MEAN" > : DEFAULT |
+<F_MEDIAN: "MEDIAN" > : DEFAULT |
+<F_MIDRANGE: "MIDRANGE" > : DEFAULT |
+<F_MIN: "MIN" > : DEFAULT |
+<F_MOD: "MOD" > : DEFAULT |
+<F_NATIONAL_OF: "NATIONAL-OF" > : DEFAULT |
+<F_NUMVAL: "NUMVAL" > : DEFAULT |
+<F_NUMVAL_C: "NUMVAL-C" > : DEFAULT |
+<F_ORD: "ORD" > : DEFAULT |
+<F_ORD_MAX: "ORD-MAX" > : DEFAULT |
+<F_ORD_MIN: "ORD-MIN" > : DEFAULT |
+<F_PRESENT_VALUE: "PRESENT-VALUE" > : DEFAULT |
+<F_RANDOM: "RANDOM" > : DEFAULT |
+<F_RANGE: "RANGE" > : DEFAULT |
+<F_REM: "REM" > : DEFAULT |
+<F_REVERSE: "REVERSE" > : DEFAULT |
+<F_SIN: "SIN" > : DEFAULT |
+<F_SQRT: "SQRT" > : DEFAULT |
+<F_STANDARD_DEVIATION: "STANDARD-DEVIATION" > : DEFAULT |
+<F_SUM: "SUM" > : DEFAULT |
+<F_TAN: "TAN" > : DEFAULT |
+<F_UNDATE: "UNDATE" > : DEFAULT |
+<F_UPPER_CASE: "UPPER-CASE" > : DEFAULT |
+<F_VARIANCE: "VARIANCE" > : DEFAULT |
+<F_WHEN_COMPILED: "WHEN-COMPILED" > : DEFAULT |
+<F_YEAR_TO_YYYY: "YEAR-TO-YYYY" > : DEFAULT |
+<F_YEARWINDOW: "YEARWINDOW" > : DEFAULT 
+} 
+
+< EXEC_STATE > TOKEN :
+{
+  < CONCAT: "||">
+}
+ TOKEN :
+{
+  < HEXNUMBER: ( "X\"" ( <DIGIT>|["a"-"f"] )+ "\""
+               | "X'" (  <DIGIT>|["a"-"f"] )+ "'"
+               )
+  >
+| < LEVEL_66: "66" >
+| < LEVEL_77: "77" >
+| < LEVEL_78: "78" >
+| < LEVEL_88: "88" >
+| < LEVEL_NUMBER: ( ("0" ["1"-"9"]) | (["1"-"4"] <DIGIT>) )>
+| < INTEGER: (["0"-"9"])+ >
+| < COMMA_INTEGER: ((<DIGIT>)+ "," (<DIGIT>)+ )+ >
+}
+< EXEC_STATE , DEFAULT > TOKEN :
+{
+  < COMMACHAR: "," >
+}
+/*
+<DEFAULT> SPECIAL_TOKEN :
+{
+ < COMMA_COBOL: "," >
+}
+*/
+< EXEC_STATE , DEFAULT > TOKEN :
+{
+ < LPARENCHAR: "(" >
+| < MINUSCHAR: "-" > // a.k.a. dash
+| < MINUSCHAR_SUBS: (<SPACE_SEPARATOR> "-" <SPACE_SEPARATOR> )  > 
+| < RPARENCHAR: ")" >
+| < COLONCHAR: ":" >
+| < #DOUBLEDQUOTECHAR: "\"\"" >
+| < QUOTECHAR: "\"" >
+| < #DOUBLEDAPOSTROPHE: "''" >
+| < APOSTROPHE: "'" >
+| < PLUSCHAR: "+" >
+| < PLUSCHAR_SUBS: (<SPACE_SEPARATOR> "+" <SPACE_SEPARATOR>) >
+| < ASTERISKCHAR: "*" >
+| < SLASHCHAR: "/" >
+| < DOLLARCHAR: "$" >
+| < LESSTHANCHAR: "<" >
+| < MORETHANCHAR: ">" >
+| < EQUALCHAR: "=" >
+| < MORETHANOREQUAL: <MORETHANCHAR> <EQUALCHAR> >
+| < LESSTHANOREQUAL: <LESSTHANCHAR> <EQUALCHAR>  >
+| < POW: "**" >
+| < JAVA_NE: "!=" >
+| < NOTEQUALCHAR: "<>" >
+}
+< IN_COMMENT2 > TOKEN : {
+    < ENVIRONMENT_DIVISION: ("environment" ( " " | "\t" | "\f" | ";" | "\r" )+ "division" ( " " | "\t" | "\f" | ";" | "\r" )* "."( " " | "\t" | "\f" | ";" | "\r" )*) > : DEFAULT | 
+    < DATA_DIVISION: ("data" ( " " | "\t" | "\f" | ";" | "\r" )+ "division" ( " " | "\t" | "\f" | ";" | "\r" )* "."( " " | "\t" | "\f" | ";" | "\r" )*) > : DEFAULT | 
+    < PROCEDURE_DIVISION: ("procedure" ( " " | "\t" | "\f" | ";" | "\r" )+ "division" ( " " | "\t" | "\f" | ";" | "\r" )* ) > : DEFAULT } 
+< IN_COMMENT2 > TOKEN : {
+    < DOT2:  "." > }   
+< IN_COMMENT2 > TOKEN : {
+    < AUTHOR2:"author">  }             
+< IN_COMMENT2 > TOKEN : {
+    < SECURITY2:"security"> } 
+< IN_COMMENT2 > TOKEN : {
+    < DATE_WRITTEN2:"date-written"> }
+< IN_COMMENT2 > TOKEN : {
+    < DATE_COMPILED2:"date-compiled">  } 
+< IN_COMMENT2 > TOKEN : {
+    < INSTALLATION2:"installation"> }
+<IN_COMMENT2 > TOKEN:
+{
+	 <COMMENT2: ((~[".","\r","\n"])+ |<COMMENT>) > 
+}
+<PICTURE_STATE> TOKEN:
+{ < PICTURE_STRING:
+	(
+		([".","$"]|"CR"|"DB")? 
+		(
+			(
+				["A","B","E","G","P","S","V","X","Z","9","0","+","-","*","$"]
+			)+ 
+			(
+				"(" (["0"-"9"])+ ")"
+			)?
+		)+
+		(
+			(
+	 			["/",",",".",":"]
+	 		)  
+			(	
+	 			(
+					["A","B","E","G","P","S","V","X","Z","9","0","+","-","*","$"]
+				)+ 
+				(
+						"(" (["0"-"9"])+ ")"
+				)?
+			)+	
+		)*
+		("CR"|"DB")? 
+	)
+	 > : DEFAULT
+}
+	//picture-string = currency? (picchar+ repeat?)+ (punctuation (picchar+ repeat?)+)* 
+// (["A","B","E","G","N","P","S","X","Z","9","0","*","$"] ("(" (["0"-"9"])+ ")")? |
+//	["/",",","+","-"] | ("V"|".") ["9","0","Z","P","*","$"] ("(" (["0"-"9"])+ ")")? |"CR"|"DB")+  
+	
+	
+	
+<PICTURE_STATE> TOKEN:
+{
+ <PICTURE_IS: "is" >
+}
+<PICTURE_STATE> SPECIAL_TOKEN:
+{
+ < PICTURE_SPACE : ( <SPACECHAR> | <EOL> )+ > 
+}
+
+//SQL RELATED
+< EXEC_STATE > TOKEN: /* SQL and PLSQL Keywords. prefixed with K_ to avoid name clashes */
+{
+   <K_ALL: "ALL">
+|   <K_ALTER: "ALTER">
+|   <K_AND: "AND">
+|   <K_ANY: "ANY">
+|   <K_AS: "AS">
+|   <K_ASC:"ASC">
+|   <K_BEGIN: "BEGIN">
+|   <K_BETWEEN:"BETWEEN">
+|   <K_BINARY_SQL_INTEGER: "BINARY_SQL_INTEGER">
+|   <K_BOOLEAN:"BOOLEAN">
+|   <K_BY:"BY">
+|   <K_CHAR:"CHAR">
+|   <K_CLOSE:"CLOSE">
+|   <K_COMMENT:"COMMENT">
+|   <K_COMMIT:"COMMIT">
+|   <K_CONNECT:"CONNECT">
+|   <K_CONSTANT:"CONSTANT">
+|   <K_CURRENT:"CURRENT">
+|   <K_CURSOR:"CURSOR">
+|   <K_DATE:"DATE">
+//|   <K_DECIMAL:"DECIMAL">
+|   <K_DECLARE:"DECLARE">
+|   <K_DEFAULT:"DEFAULT">
+|   <K_DELETE:"DELETE">
+|   <K_DESC:"DESC">
+|   <K_DISTINCT:"DISTINCT">
+|   <K_DO:"DO">
+|   <K_ELSE:"ELSE">
+|   <K_ELSIF:"ELSIF">
+|   <K_END:"END">
+|   <K_EXCEPTION:"EXCEPTION">
+|   <K_EXCEPTION_INIT:"EXCEPTION_INIT">
+|   <K_EXCLUSIVE:"EXCLUSIVE">
+|   <K_EXISTS:"EXISTS">
+|   <K_EXIT:"EXIT">
+|   <K_FETCH:"FETCH">
+|   <K_FLOAT:"FLOAT">
+|   <K_FOR:"FOR">
+|   <K_FROM:"FROM">
+|   <K_FUNCTION:"FUNCTION">
+|   <K_GOTO:"GOTO">
+|   <K_GROUP:"GROUP">
+|   <K_HAVING:"HAVING">
+|   <K_IF:"IF">
+|   <K_IN:"IN">
+|   <K_INCLUDE:"INCLUDE">
+|   <K_INDEX:"INDEX">
+|   <K_INDICATOR:"INDICATOR">
+|   <K_INSERT:"INSERT">
+|   <K_SQL_INTEGER:"SQL_INTEGER">
+|   <K_INTERSECT:"INTERSECT">
+|   <K_INTO:"INTO">
+|   <K_IS:"IS">
+|   <K_JOIN:"JOIN">
+//|   <K_LEVEL:"LEVEL">
+|   <K_LIKE:"LIKE">
+|   <K_LOCK:"LOCK">
+|   <K_LOOP:"LOOP">
+|   <K_MINUS:"MINUS">
+|   <K_MODE:"MODE">
+|   <K_NATURAL:"NATURAL">
+|   <K_NOT:"NOT">
+|   <K_NOWAIT:"NOWAIT">
+|   <K_NULL:"NULL">
+|   <K_NUMBER:"NUMBER">
+|   <K_OF:"OF">
+|   <K_ONLY:"ONLY">
+|   <K_OPEN:"OPEN">
+|   <K_OR:"OR">
+|   <K_ON:"ON">
+|   <K_ORDER:"ORDER">
+|   <K_OTHERS:"OTHERS">
+|   <K_OUT:"OUT">
+|   <K_PACKAGE:"PACKAGE">
+|   <K_POSITIVE:"POSITIVE">
+|   <K_PREPARE:"PREPARE">
+|   <K_PRAGMA:"PRAGMA">
+|   <K_PRIOR:"PRIOR">
+|   <K_PROCEDURE:"PROCEDURE">
+|   <K_RAISE:"RAISE">
+|   <K_READ:"READ">
+|   <K_REAL:"REAL">
+|   <K_RECORD:"RECORD">
+|   <K_REF:"REF">
+|   <K_RETURN:"RETURN">
+|   <K_REVERSE:"REVERSE">
+|   <K_ROLLBACK:"ROLLBACK">
+|   <K_ROW:"ROW">
+|   <K_SAVEPOINT:"SAVEPOINT">
+|   <K_SECTION:"SECTION">
+|   <K_SEGMENT:"SEGMENT">
+|   <K_SELECT:"SELECT">
+|   <K_SESSION:"SESSION">
+|   <K_SET:"SET">
+|   <K_SHARE:"SHARE">
+|   <K_SMALLINT:"SMALLINT">
+|   <K_SQL:"SQL">
+|   <K_START:"START">
+|   <K_TABLE:"TABLE">
+|   <K_THEN:"THEN">
+|   <K_TO:"TO">
+|   <K_TRANSACTION:"TRANSACTION">
+|   <K_UNION:"UNION">
+|   <K_UPDATE:"UPDATE">
+|   <K_USE:"USE">
+|   <K_USING:"USING">
+|   <K_VALUES:"VALUES">
+|   <K_VARCHAR2:"VARCHAR2">
+|   <K_VARCHAR:"VARCHAR">
+|   <K_WHEN:"WHEN">
+|   <K_WHERE:"WHERE">
+|   <K_WHILE:"WHILE">
+|   <K_WITH:"WITH">
+|   <K_WORK:"WORK">
+|   <K_WRITE:"WRITE">
+|   <K_EXECUTE: "EXECUTE" > 
+|   <K_WHENEVER:"WHENEVER"> 
+|   <K_SQLERROR: ("SQLERROR" (<DO>)?) > : DEFAULT
+|   <K_SQLWARNING: ("SQLWARNING"  (<DO>)?)> : DEFAULT
+|   <K_FOUND: ("FOUND" (<DO>)?)> : DEFAULT
+}
+< EXEC_STATE > TOKEN: /* SQL and PLSQL Keywords. prefixed with K_ to avoid name clashes */
+{
+<#DO: (([" ","\t"])+ "DO") >
+}
+< EXEC_STATE > TOKEN : /* Numeric Constants */
+{
+	< S_NUMBER: <FLOAT>
+	    | <FLOAT> ( ["e","E"] ([ "-","+"])? <FLOAT> )?
+    	>
+  | 	< #FLOAT: <SQL_INTEGER>
+	    | <SQL_INTEGER> ( "." <SQL_INTEGER> )?
+	    | "." <SQL_INTEGER>
+    	>
+  | 	< #SQL_INTEGER: ( <DIGIT> )+ >
+  //| 	< #DIGIT: ["0" - "9"] >
+}
+SKIP:
+{
+< TRIVIAL: ( "END-EXEC" | "EJECT" | "SKIP1" | "SKIP2" | "SKIP3" ) > 
+} 
+
+
+TOKEN:
+{
+ < QUOTEDSTRING: ( <QUOTECHAR> (~["\""] | <DOUBLEDQUOTECHAR> )* <QUOTECHAR>
+                  | <APOSTROPHE> (~["'"] | <DOUBLEDAPOSTROPHE> )* <APOSTROPHE>
+                  )
+  >
+| <COBOL_WORD: ((<DIGIT>)+ (<MINUSCHAR>)*)*
+    (<DIGIT>)* <LETTER> ( <LETTER> | <DIGIT> )*
+    ( (<MINUSCHAR>)+ (<LETTER> | <DIGIT>)+)*
+  >
+}
+< EXEC_STATE > TOKEN:
+{
+ < SQL: <K_SQL> >
+|	< S_IDENTIFIER: ( <LETTER> )+ ( <DIGIT> | <LETTER> |<SPECIAL_CHARS>)* >
+//| 	< #LETTER: ["a"-"z", "A"-"Z"] >
+|   < #SPECIAL_CHARS: "$" | "_" |"-">
+|   < S_BIND: (":" ([" "])* <S_IDENTIFIER> ("." <S_IDENTIFIER>)?) >
+|   < S_CHAR_LITERAL: "'" (~["'"])* "'" ("'" (~["'"])* "'")* | <QUOTEDSTRING> >
+|   < S_QUOTED_IDENTIFIER: <QUOTEDSTRING> > //"\"" (~["\n","\r","\""])* "\"" >
+}
+
+< EXEC_STATE > TOKEN:
+{
+	< ANY_CHAR: ~[] >
+}
+
+TOKEN_MGR_DECLS :
+{
+ public static java.util.ArrayList commentLines=new java.util.ArrayList();
+ public static Token lastToken=null;
+ public void CommonTokenAction(Token t) {
+  lastToken=t;
+  if (t.specialToken == null) return;
+    // The above statement determines that there are no special tokens
+    // and returns control to the caller.
+  Token tmp_t = t.specialToken;
+  while (tmp_t.specialToken != null) tmp_t = tmp_t.specialToken;
+    // The above line walks back the special token chain until it
+    // reaches the first special token after the previous regular
+    // token.
+  while (tmp_t != null) {
+  if(tmp_t.kind==CobolParserConstants.COMMENT||
+  	tmp_t.kind==CobolParserConstants.COMMENT2)
+       commentLines.add(tmp_t);
+    tmp_t = tmp_t.next;
+  }
+    // The above loop now walks the special token chain in the forward
+    // direction printing them in the process
+ 
+ }
+}
+
+
+void CobolWord () : // contains at least one alphabetic, max. 30 char
+{}
+{
+    <COBOL_WORD>
+}
+
+void IntegerConstant() :
+{}
+{
+  <LEVEL_66> | <LEVEL_77> | <LEVEL_78> | <LEVEL_88> | <LEVEL_NUMBER> | <INTEGER> | <COMMA_INTEGER>
+}
+
+void NumericConstant() :
+{}
+{
+  (<PLUSCHAR> | <MINUSCHAR>)? 
+  (
+  		LOOKAHEAD(IntegerConstant()<DOTCHAR>) IntegerConstant() <DOTCHAR> [IntegerConstant()] |
+  		LOOKAHEAD(<DOTCHAR>) <DOTCHAR> IntegerConstant()|
+  		LOOKAHEAD(IntegerConstant()) IntegerConstant() 
+  )
+}
+
+void LevelNumber() :
+{}
+{
+  <LEVEL_NUMBER>
+}
+
+void FigurativeConstant() :
+{}
+{
+    <ZERO> | <ZEROS> | <ZEROES>
+  | <SPACE> | <SPACES>
+  | <HIGH_VALUE> | <HIGH_VALUES>
+  | <LOW_VALUE> | <LOW_VALUES>
+  | <QUOTE> | <QUOTES>
+  | <NULL> | <NULLS>
+}
+
+void NonNumericConstant() :
+{}
+{
+   ( <QUOTEDSTRING> 
+   | <HEXNUMBER>
+   )
+}
+
+void Literal() :
+{}
+{
+  [ <ALL> ] ( NonNumericConstant()
+            | NumericConstant()
+            /* | <DBCS> */
+            | FigurativeConstant()
+            |LOOKAHEAD(<FUNCTION>)  	IntrinsicFunction()
+            | SpecialRegister()
+            | LOOKAHEAD(<LINAGE_COUNTER>) <LINAGE_COUNTER> [ ( <IN> | <OF> ) FileName() ]
+            )
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// LOGICAL EXPRESSIONS (e.g. in IF statements)
+// one of the nice feature of COBOL is to allow for abbeviated conditions
+// such as : if X less than 100 and more than 10 then ...
+////////////////////////////////////////////////////////////////////////////////
+
+void Condition() :
+{}
+{
+  CombinableCondition() 
+  ( ( <AND> | <OR> )  
+  		( LOOKAHEAD(CombinableCondition()) CombinableCondition() |
+  		 LOOKAHEAD(AbbreviationRest())  AbbreviationRest()
+  		 )  
+  
+  )*
+}
+
+void CombinableCondition() :
+{}
+{
+  [<NOT>] SimpleCondition()
+}
+
+void SimpleCondition() :
+{}
+{
+ 
+  (
+    LOOKAHEAD(ClassCondition()) ClassCondition()
+  | LOOKAHEAD(RelationCondition()) RelationCondition() 
+  | LOOKAHEAD(2147483647,ConditionNameCondition(),{notFollowedByOp()}) ConditionNameCondition()
+  | <LPARENCHAR> Condition() <RPARENCHAR>
+  )
+}
+
+void ClassCondition() :
+{}
+{
+  Identifier() [ <IS> ] [ <NOT> ] ( <NUMERIC> | <ALPHABETIC> | <ALPHABETIC_LOWER> | <ALPHABETIC_UPPER> | ClassName() | <DBCS> | <KANJI> )
+}
+
+void ConditionNameCondition() :
+{}
+{
+  ConditionNameReference()
+}
+
+void RelationCondition() :
+{}
+{
+  ArithmeticExpression() ( LOOKAHEAD(RelationalOperator()) RelationalOperator() ArithmeticExpression() 
+                         | SignCondition()
+                         )
+}
+
+void SignCondition() :
+{}
+{
+	[ <IS> ] [ <NOT> ] ( <POSITIVE> | <NEGATIVE> | (<ZERO>|<ZEROS>|<ZEROES>) )
+}
+
+void RelationalOperator() :
+{}
+{
+   [ <IS> ] [ <NOT> ]  ( 
+    					 LOOKAHEAD(3) <GREATER> [ <THAN> ] <OR> <EQUAL> [ <TO> ]
+           				| <MORETHANOREQUAL>
+			           | LOOKAHEAD(3) <LESS> [ <THAN> ] <OR> <EQUAL> [ <TO> ]
+           				| <LESSTHANOREQUAL>
+   						| LOOKAHEAD(3) <GREATER> [ <THAN> ]
+                       | <MORETHANCHAR>
+                       | LOOKAHEAD(3) <LESS> [ <THAN> ]
+                       | <LESSTHANCHAR>
+                       | (<EQUAL>|<EQUALS>) [ <TO> ]
+                       | <EQUALCHAR>[ <TO> ]
+           | <NOTEQUALCHAR>
+           )
+}
+
+void AbbreviationRest() :
+{}
+{
+  (   [ <NOT> ] [ RelationalOperator() ] AbbreviationLeaf() )+
+}
+
+void AbbreviationLeaf() :
+{}
+{
+  ( ArithmeticExpression() | <LPARENCHAR> ArithmeticExpression() AbbreviationRest() <RPARENCHAR> )
+
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// VARIOUS TYPES OF IDENTIFIERS
+////////////////////////////////////////////////////////////////////////////////
+
+void ProcedureName() :
+{}
+{
+  ( ParagraphName() [ ( <IN> | <OF> ) SectionName() ]
+  | SectionName()
+  )
+}
+
+void Identifier() :
+{}
+{
+  ( QualifiedDataName() 
+		  (
+			LOOKAHEAD(<LPARENCHAR> Subscript() ([<COMMACHAR>] Subscript())* <RPARENCHAR>) 
+			<LPARENCHAR> Subscript() 
+				(LOOKAHEAD({getToken(1).kind!=RPARENCHAR}) [<COMMACHAR>] Subscript())*  
+			<RPARENCHAR> 
+		  )* 
+	    		[ LOOKAHEAD(<LPARENCHAR> LeftmostCharacterPosition() <COLONCHAR>) 
+	    		<LPARENCHAR> LeftmostCharacterPosition() <COLONCHAR> [ Length() ] <RPARENCHAR> ]
+	| <RETURN_CODE>
+	)
+}
+
+void QualifiedDataName() :
+{}
+{
+  ( DataName() ( ( <IN> | <OF> ) DataName() )* [ ( <IN> | <OF> ) FileName() ]
+  )
+}
+
+void IntrinsicFunction() : 
+{}
+{
+	(
+		<FUNCTION> (
+			<F_ACOS>|
+			<F_ANNUITY>|
+			<F_ASIN>|
+			<F_ATAN>|
+			<F_CHAR>|
+			<F_COS>|
+			<F_CURRENT_DATE>|
+			<F_DATE_OF_INTEGER>|
+			<F_DATE_TO_YYYYMMDD>|
+			<F_DATEVAL>|
+			<F_DAY_OF_INTEGER>|
+			<F_DAY_TO_YYYYDDD>|
+			<F_DISPLAY_OF>|
+			<F_FACTORIAL>|
+			<F_INTEGER>|
+			<F_INTEGER_OF_DATE>|
+			<F_INTEGER_OF_DAY>|
+			<F_INTEGER_PART>|
+			<F_LENGTH>|
+			<F_LOG>|
+			<F_LOG10>|
+			<F_LOWER_CASE>|
+			<F_MAX>|
+			<F_MEAN>|
+			<F_MEDIAN>|
+			<F_MIDRANGE>|
+			<F_MIN>|
+			<F_MOD>|
+			<F_NATIONAL_OF>|
+			<F_NUMVAL>|
+			<F_NUMVAL_C>|
+			<F_ORD>|
+			<F_ORD_MAX>|
+			<F_ORD_MIN>|
+			<F_PRESENT_VALUE>|
+			<F_RANDOM>|
+			<F_RANGE>|
+			<F_REM>|
+			<F_REVERSE>|
+			<F_SIN>|
+			<F_SQRT>|
+			<F_STANDARD_DEVIATION>|
+			<F_SUM>|
+			<F_TAN>|
+			<F_UNDATE>|
+			<F_UPPER_CASE>|
+			<F_VARIANCE>|
+			<F_WHEN_COMPILED>|
+			<F_YEAR_TO_YYYY>|
+			<F_YEARWINDOW>
+		) [<LPARENCHAR>
+		   [
+		    	LOOKAHEAD(QualifiedDataName() <LPARENCHAR> (<ALL> [<COMMACHAR>])+ <RPARENCHAR>) 
+			  		QualifiedDataName() <LPARENCHAR> (<ALL> [<COMMACHAR>])+  <RPARENCHAR>
+			  |	LOOKAHEAD(FunctionArgument()) 
+			  	FunctionArgument()  (LOOKAHEAD([<COMMACHAR>] FunctionArgument()) [<COMMACHAR>] FunctionArgument())* 
+			  
+			]
+		   <RPARENCHAR>
+		   ]
+	)
+}
+void FunctionArgument() :
+{}
+{
+	LOOKAHEAD(Identifier(),{notFollowedByOp()})Identifier() |
+	LOOKAHEAD(Literal(),{notFollowedByOp()}) Literal() |
+  	LOOKAHEAD(ArithmeticExpression())ArithmeticExpression() 
+}
+void Length() :
+{}
+{
+  ArithmeticExpression()
+}
+
+void LeftmostCharacterPosition() :
+{}
+{
+  ArithmeticExpression()
+}
+
+void ConditionNameReference() :
+{}
+{
+   /* Identifier()*/
+
+  ConditionName()
+  ( ( ( <IN> | <OF> ) DataName() )* [ ( <IN> | <OF> ) FileName() ] ( <LPARENCHAR> Subscript()([<COMMACHAR>]Subscript())* <RPARENCHAR> )*
+  | ( ( <IN> | <OF> ) MnemonicName() )*
+  )
+  
+}
+
+void Subscript() :
+{}
+{
+  ([  (<PLUSCHAR_SUBS> | <PLUSCHAR>) | (<MINUSCHAR_SUBS> | <MINUSCHAR>) ] IntegerConstant()
+  | QualifiedDataName() [ ( <PLUSCHAR_SUBS> | <MINUSCHAR_SUBS> )  IntegerConstant() ]
+  | IndexName() [ ( <PLUSCHAR_SUBS> | <MINUSCHAR_SUBS> ) IntegerConstant() ]
+  )
+}
+
+void Mode() :
+{}
+{
+  CobolWord()
+}
+
+void AlphabetName() :
+{}
+{
+  CobolWord()
+}
+
+void ClassName() :
+{}
+{
+  CobolWord()
+}
+
+void ConditionName() :
+{}
+{
+  CobolWord()
+}
+
+void DataName() :
+{}
+{
+  CobolWord()
+}
+
+void FileName() :
+{}
+{
+  CobolWord()
+}
+
+void IndexName() :
+{}
+{
+  CobolWord()
+}
+
+void MnemonicName() :
+{}
+{
+  CobolWord()
+}
+
+void RecordName() :
+{}
+{
+  QualifiedDataName()
+}
+
+void RoutineName() :
+{}
+{
+  CobolWord()
+}
+
+void SymbolicCharacter() :
+{}
+{
+  CobolWord()
+}
+
+void LibraryName() :
+{}
+{
+  CobolWord()
+}
+
+void ProgramName() :
+{}
+{
+  CobolWord()
+}
+void CdName() :
+{}
+{
+  CobolWord()
+}
+
+void SectionName() :
+{}
+{
+ <LEVEL_66> | <LEVEL_77> | <LEVEL_78> | <LEVEL_88> | <LEVEL_NUMBER> | <INTEGER>  | CobolWord()
+}
+
+void ParagraphName() :
+{}
+{
+ <LEVEL_66> | <LEVEL_77> | <LEVEL_78> | <LEVEL_88> | <LEVEL_NUMBER> | <INTEGER>  | CobolWord()
+}
+
+void SystemName() :
+{}
+{
+  CobolWord()
+}
+
+void ComputerName() :
+{}
+{
+  SystemName()
+}
+
+void LanguageName() :
+{}
+{
+  SystemName()
+}
+
+void EnvironmentName() :
+{}
+{
+  SystemName()
+}
+
+void AssignmentName() :
+{}
+{
+  SystemName()
+}
+
+void BasisName() :
+{
+}
+{
+  ProgramName()
+}
+
+void SpecialRegister() :
+{}
+{
+  ( <ADDRESS> <OF> DataName()
+  | <LENGTH> <OF> Identifier()
+  | <DEBUG_LINE>
+  | <DEBUG_NAME>
+  | <DEBUG_CONTENTS>
+  | <DEBUG_ITEM>
+  | <DEBUG_SUB_1>
+  | <DEBUG_SUB_2>
+  | <DEBUG_SUB_3>
+  | <RETURN_CODE>
+  | <SHIFT_OUT>
+  | <SHIFT_IN>
+  | <SORT_CONTROL>
+  | <SORT_CORE_SIZE>
+  | <SORT_FILE_SIZE>
+  | <SORT_MESSAGE>
+  | <SORT_MODE_SIZE>
+  | <SORT_RETURN>
+  | <TALLY>
+  | <WHEN_COMPILED>
+  )
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ARITHMETIC
+////////////////////////////////////////////////////////////////////////////////
+
+void ArithmeticExpression() :
+{}
+{
+  TimesDiv() ( ( (<PLUSCHAR_SUBS> | <PLUSCHAR>) | (<MINUSCHAR_SUBS> | <MINUSCHAR>) ) TimesDiv() )*
+}
+
+void TimesDiv() :
+{}
+{
+  Power() ( ( <ASTERISKCHAR> | <SLASHCHAR> ) Power() )*
+}
+
+void Power() :
+{}
+{
+  [ ( (<PLUSCHAR_SUBS> | <PLUSCHAR>) | (<MINUSCHAR_SUBS> | <MINUSCHAR>) ) ] Basis() ( <POW> Basis() )*
+}
+
+void Basis() :
+{}
+{
+  ( LOOKAHEAD(Identifier())Identifier() | 
+  	LOOKAHEAD(Literal()) Literal() | 
+  	LOOKAHEAD(<LPARENCHAR>)<LPARENCHAR> ArithmeticExpression() <RPARENCHAR> )
+}
+
+void CommentLine() :
+{}
+{
+(<COMMENT2> [<DOT2>])+ 
+}
+////////////////////////////////////////////////////////////////////////////////
+// COMPILATION UNIT.
+////////////////////////////////////////////////////////////////////////////////
+
+void CompilationUnit() :
+{}
+{
+  (ProgramUnit()
+  ( LOOKAHEAD(<IDENTIFICATION>|<ID>) NestedProgramUnit() )* [EndProgramStatement()])*
+  <EOF>
+}
+
+void ProgramUnit() :
+{}
+{
+  IdentificationDivision()
+  [ EnvironmentDivision() ]
+  [ DataDivision() ]
+  [ ProcedureDivision() ]
+}
+
+void NestedProgramUnit() :
+{}
+{
+  NestedIdentificationDivision()
+  [ EnvironmentDivision() ]
+  [ DataDivision() ]
+  [ ProcedureDivision() ]
+ ( LOOKAHEAD(<IDENTIFICATION>|<ID>) NestedProgramUnit() )* EndProgramStatement()
+}
+
+void EndProgramStatement() :
+{}
+{
+  <END> <PROGRAM> ProgramName() <DOT>
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// IDENTIFICATION DIVISION.
+////////////////////////////////////////////////////////////////////////////////
+
+void IdentificationDivision() :
+{}
+{
+  <IDENTIFICATION> <DIVISION> <DOT>
+  ProgramIdParagraph()
+  ( IdentificationDivisionParagraph() )*
+}
+
+void NestedIdentificationDivision() :
+{}
+{
+  ( <IDENTIFICATION> | <ID> ) <DIVISION> <DOT>
+  NestedProgramIdParagraph()
+  ( IdentificationDivisionParagraph() )*
+}
+
+void IdentificationDivisionParagraph() :
+{}
+{
+    AuthorParagraph()
+  | InstallationParagraph()
+  | DateWrittenParagraph()
+  | DateCompiledParagraph()
+  | SecurityParagraph()
+}
+
+void ProgramIdParagraph() :
+{}
+{
+  <PROGRAM_ID> <DOT> ProgramName() [ [ <IS> ] <INITIAL> [ <PROGRAM> ] ] <DOT>
+}
+
+void NestedProgramIdParagraph() :
+{}
+{
+  <PROGRAM_ID> <DOT> ProgramName()
+  [ [ <IS> ] InitialOrCommon() [ <PROGRAM> ] ] <DOT>
+}
+
+void InitialOrCommon() :
+{}
+{
+  ( <INITIAL> [ <COMMON> ]
+  | <COMMON> [ <INITIAL> ]
+  )
+}
+
+void AuthorParagraph() :
+{
+  //System.out.println("Deprecated keyword : author - use a comment");
+}
+{
+  (<AUTHOR>|<AUTHOR2>) (<DOT2>|<DOT>) [CommentLine()]
+}
+
+void InstallationParagraph() :
+{
+  //System.out.println("Deprecated keyword : installation - use a comment");
+}
+{
+  (<INSTALLATION>|<INSTALLATION2>) (<DOT2>|<DOT>) [CommentLine()]
+}
+
+void DateWrittenParagraph() :
+{
+  //System.out.println("Deprecated keyword : date-written - use a comment");
+}
+{
+  (<DATE_WRITTEN>|<DATE_WRITTEN2>)  (<DOT2>|<DOT>) [CommentLine()]
+}
+
+void DateCompiledParagraph() :
+{
+  //System.out.println("Deprecated keyword : date-compiled - use a comment");
+}
+{
+  (<DATE_COMPILED>|<DATE_COMPILED2>)  (<DOT2>|<DOT>) [CommentLine()]
+}
+
+void SecurityParagraph() :
+{
+  //System.out.println("Deprecated keyword : security - use a comment");
+}
+{
+  (<SECURITY>|<SECURITY2>) (<DOT2>|<DOT>) [CommentLine()]
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// ENVIRONMENT DIVISION.
+////////////////////////////////////////////////////////////////////////////////
+
+void EnvironmentDivision() :
+{}
+{
+  (<ENVIRONMENT> <DIVISION> <DOT>|<ENVIRONMENT_DIVISION>)
+  ( EnvironmentSection() )*
+}
+
+void EnvironmentSection() :
+{}
+{
+    ConfigurationSection()
+  | InputOutputSection()
+}
+
+//------------------------------------------------------------------------------
+// CONFIGURATION SECTION
+//------------------------------------------------------------------------------
+
+void ConfigurationSection() :
+{}
+{
+  <CONFIGURATION> <SECTION> <DOT>
+  ( ConfigurationSectionParagraph() )*
+}
+
+void ConfigurationSectionParagraph() :
+{}
+{
+    SourceComputerParagraph()
+  | ObjectComputerParagraph()
+  | SpecialNamesParagraph()
+}
+
+void SourceComputerParagraph() :
+{}
+{
+  <SOURCE_COMPUTER> <DOT> ComputerName() [ [ <WITH> ] <DEBUGGING> <MODE> ] <DOT>
+}
+
+void ObjectComputerParagraph() :
+{}
+{
+  <OBJECT_COMPUTER> <DOT>
+  ComputerName() ( ObjectComputerClause() )* <DOT>
+}
+
+void ObjectComputerClause() :
+{}
+{
+    MemorySizeClause()
+  | CollatingSequenceClause()
+  | SegmentLimitClause()
+  | CharacterSetClause()
+}
+
+void MemorySizeClause() :
+{
+  //System.out.println("Deprecated keyword : memory - use a comment");
+}
+{
+  <MEMORY> [ <SIZE> ] IntegerConstant() [ <WORDS> | <CHARACTERS> | <MODULES> ]
+}
+
+void CollatingSequenceClause() :
+{
+  //System.out.println("Deprecated keyword : collating sequence - use a comment");
+}
+{
+  [ <PROGRAM> ] [ <COLLATING> ] <SEQUENCE> [ <IS> ] AlphabetName()
+}
+
+void SegmentLimitClause() :
+{
+  //System.out.println("Deprecated keyword : segment unit - use a comment");
+}
+{
+  <SEGMENT_LIMIT> [ <IS> ] IntegerConstant()
+}
+
+void CharacterSetClause() :
+{}
+{ // Tandem ???
+  <CHARACTER> <SET> 
+}
+
+void SpecialNamesParagraph() :
+{}
+{
+  <SPECIAL_NAMES> <DOT>
+  [ SpecialNameClause() ([<COMMACHAR>] SpecialNameClause() )* <DOT> ]
+}
+
+void SpecialNameClause() :
+{}
+{
+    AlphabetClause()
+  | ClassClause()
+  | CurrencySignClause()
+  | DecimalPointClause()
+  | SymbolicCharactersClause()
+  | EnvironmentNameIsMnemonicNameClause()
+}
+
+void AlphabetClause() :
+{}
+{
+  <ALPHABET> AlphabetName() [ <IS> ]
+  ( <STANDARD_1>
+  | <STANDARD_2>
+  | <NATIVE>
+  | CobolWord()
+  | ( Literal() [ ( ( <THROUGH> | <THRU> ) Literal() | ( <ALSO> Literal()[<COMMACHAR>] )+ ) ][<COMMACHAR>] )+
+  )
+}
+
+void ClassClause() :
+{}
+{
+  <CLASS> ClassName() [ <IS> ] ( Literal() [ ( <THROUGH> | <THRU> ) Literal() ] )+
+}
+
+void CurrencySignClause() :
+{}
+{
+  <CURRENCY> [ <SIGN> ] [ <IS> ] Literal()
+}
+
+void DecimalPointClause() :
+{}
+{
+  <DECIMAL_POINT> [ <IS> ] <COMMA>
+}
+
+void SymbolicCharactersClause() :
+{}
+{
+  <SYMBOLIC> [ <CHARACTERS> ] ( ( SymbolicCharacter() )+ [ ( <ARE> | <IS> ) ] ( IntegerConstant() )+ )+ [ <IN> AlphabetName() ]
+}
+
+void EnvironmentNameIsMnemonicNameClause() :
+{}
+{
+ ( EnvironmentName() [ <IS> ] MnemonicName() [ SpecialNamesParagraphStatusPhrase() ]
+ | SpecialNamesParagraphStatusPhrase()
+ )
+}
+
+void SpecialNamesParagraphStatusPhrase() :
+{}
+{
+  ( <ON> [ <STATUS> ] [ <IS> ] Condition() [ <OFF> [ <STATUS> ] [ <IS> ] Condition() ]
+  | <OFF> [ <STATUS> ] [ <IS> ] Condition() [ <ON> [ <STATUS> ] [ <IS> ] Condition() ]
+  )
+}
+
+//------------------------------------------------------------------------------
+// INPUT-OUTPUT SECTION
+//------------------------------------------------------------------------------
+
+void InputOutputSection() :
+{}
+{
+ [LOOKAHEAD(<INPUT_OUTPUT>) <INPUT_OUTPUT> <SECTION> <DOT> ]
+  ( InputOutputSectionParagraph() )+
+}
+
+void InputOutputSectionParagraph() :
+{}
+{
+    FileControlParagraph()
+  | IOControlParagraph()
+}
+
+void FileControlParagraph() :
+{}
+{
+ (LOOKAHEAD(<FILE_CONTROL>)  <FILE_CONTROL>   <DOT> |FileControlEntry() <DOT>) ( LOOKAHEAD( <SELECT>)  FileControlEntry() <DOT>)* 
+}
+
+void FileControlEntry() :
+{}
+{
+  SelectClause() 
+  ( FileControlClause() )*
+}
+
+void FileControlClause() :
+{}
+{
+	AssignClause()
+  | ReserveClause()
+  | LOOKAHEAD(KeyClause()) KeyClause() 
+  | LOOKAHEAD(OrganizationClause()) OrganizationClause()
+  | PaddingCharacterClause()
+  | RecordDelimiterClause()
+  | AccessModeClause()
+  | AlternateRecordKeyClause()
+  | FileStatusClause()
+  | PasswordClause()
+}
+
+void SelectClause() :
+{}
+{
+  <SELECT> [ <OPTIONAL> ] FileName()
+}
+
+void AssignClause() :
+{}
+{
+  <ASSIGN> [ <TO> ] [<DISK>] ( AssignmentName() | Literal() )
+}
+
+void ReserveClause() :
+{}
+{
+  <RESERVE> IntegerConstant() ( <AREA> | <AREAS> )?
+}
+
+void OrganizationClause() :
+{}
+{
+  [ <ORGANIZATION> ] [ <IS> ]
+  ( SequentialOrganizationClause()
+  | IndexedOrganizationClause()
+  | RelativeOrganizationClause()
+  | LineSequentialOrganizationClause()
+  )
+}
+
+void SequentialOrganizationClause() :
+{}
+{
+  <SEQUENTIAL>
+}
+
+void LineSequentialOrganizationClause() :
+{}
+{
+  <LINE> <SEQUENTIAL>
+}
+
+void RelativeOrganizationClause() :
+{}
+{
+  <RELATIVE>
+}
+
+void IndexedOrganizationClause() :
+{}
+{
+  <INDEXED>
+}
+
+void PaddingCharacterClause() :
+{}
+{
+  <PADDING> [ <CHARACTER> ] [ <IS> ] ( QualifiedDataName() | Literal() )
+}
+
+void RecordDelimiterClause() :
+{}
+{
+  <RECORD> <DELIMITER> [ <IS> ] ( <STANDARD_1> | <IMPLICIT> | AssignmentName() )
+}
+
+void AccessModeClause() :
+{}
+{
+  <ACCESS> [ <MODE> ] [ <IS> ]
+  ( SequentialAccessMode()
+  | RandomAccessMode()
+  | DynamicAccessMode()
+  )
+}
+
+void SequentialAccessMode() :
+{}
+{
+  <SEQUENTIAL> 
+}
+
+void RandomAccessMode() :
+{}
+{
+  <RANDOM>
+}
+
+void DynamicAccessMode() :
+{}
+{
+  <DYNAMIC>
+}
+
+void KeyClause() :
+{}
+{
+  (<RELATIVE>|<RECORD>) [ <KEY> ] [ <IS> ] QualifiedDataName()
+}
+
+
+void AlternateRecordKeyClause() :
+{}
+{
+  <ALTERNATE> <RECORD> [ <KEY> ] [ <IS> ] QualifiedDataName() [ PasswordClause() ] [ [ <WITH> ] <DUPLICATES> ]
+}
+
+void PasswordClause() :
+{}
+{
+  <PASSWORD> [ <IS> ] DataName()
+}
+
+void FileStatusClause() :
+{}
+{
+  [ <FILE> ] <STATUS> [ <IS> ] QualifiedDataName() [ QualifiedDataName() ]
+}
+
+void IOControlParagraph() :
+{}
+{
+  <I_O_CONTROL> <DOT>
+  [ IOControlClause() ( [ <DOT> ] IOControlClause() )* <DOT> ]
+}
+
+void IOControlClause() :
+{}
+{ [<COMMACHAR>]
+(
+    RerunClause()
+  | SameAreaClause()
+  | MultipleFileClause()
+ ) [<COMMACHAR>]
+}
+
+void RerunClause() :
+{
+  //System.out.println("Deprecated keyword : rerun");
+}
+{
+  <RERUN> [ <ON> ( AssignmentName() | FileName() ) ] <EVERY> ( Rerun2() | IntegerConstant() [ <CLOCK_UNITS> ] )
+}
+
+void Rerun2() :
+{}
+{
+    IntegerConstant() <RECORDS>
+  | [ <END> ] [ <OF> ] ( <REEL> | <UNIT> ) <OF> FileName()
+}
+
+void SameAreaClause() :
+{}
+{
+  <SAME> [ <RECORD> | <SORT> | <SORT_MERGE> ] [ <AREA> ] [ <FOR> ] ( FileName() [<COMMACHAR>])+
+}
+
+void MultipleFileClause() :
+{
+  //System.out.println("Deprecated keyword : multiple file");
+}
+{
+  <MULTIPLE> <FILE> [ <TAPE> ] [ <CONTAINS> ] ( FileName() [ <POSITION> ] [ IntegerConstant() ] [<COMMACHAR>])+
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// DATA DIVISION.
+////////////////////////////////////////////////////////////////////////////////
+
+void DataDivision() :
+{}
+{
+  (<DATA> <DIVISION> <DOT>|<DATA_DIVISION>) 
+  ( DataDivisionSection() )*
+}
+
+void DataDivisionSection() :
+{}
+{
+    FileSection()
+  | WorkingStorageSection()
+  | LinkageSection()
+  | CommunicationSection()
+}
+
+void CommunicationSection() :
+{}
+{
+  <COMMUNICATION> <SECTION> <DOT>
+  ( CommunicationDescriptionEntry() ( DataDescriptionEntry() )* )*
+}
+void CommunicationDescriptionEntry() :
+{}
+{
+  (
+    LOOKAHEAD(CommunicationInputEntry())
+    CommunicationInputEntry()
+  | LOOKAHEAD(CommunicationOutputEntry())
+    CommunicationOutputEntry()
+  | LOOKAHEAD(CommunicationIOEntry())
+    CommunicationIOEntry()
+  ) <DOT>
+}
+
+void CommunicationInputEntry() :
+{}
+{
+  <CD> CdName() [ <FOR> ] [ <INITIAL> ] <INPUT> ( CommunicationInputClause() )* ( DataName() |<FILLER> )*
+}
+
+void CommunicationOutputEntry() :
+{}
+{
+  <CD> CdName() [ <FOR> ] <OUTPUT> ( CommunicationOutputClause() )*
+}
+
+void CommunicationIOEntry() :
+{}
+{
+  <CD> CdName() [ <FOR> ] [ <INITIAL> ] <I_O> ( CommunicationIOClause() )* ( DataName() | <FILLER> )*
+}
+
+void CommunicationInputClause() :
+{}
+{
+    <MESSAGE> ( <DATE> | <TIME> | <COUNT> ) [ <IS> ] DataName()
+  | <TEXT> <LENGTH> [ <IS> ] DataName()
+  | <END> <KEY> [ <IS> ] DataName()
+  | <STATUS> <KEY> [ <IS> ] DataName()
+  | <COUNT> [ <IS> ] DataName()
+  | [ <SYMBOLIC> ] ( <QUEUE> | <SUB_QUEUE_1> | <SUB_QUEUE_2> | <SUB_QUEUE_3> | <SOURCE> ) [ <IS> ] DataName()
+}
+
+void CommunicationOutputClause() :
+{}
+{
+    <DESTINATION> <COUNT> [ <IS> ] DataName()
+  | <TEXT> <LENGTH> [ <IS> ] DataName()
+  | <STATUS> <KEY> [ <IS> ] DataName()
+  | LOOKAHEAD([ <SYMBOLIC> ] <DESTINATION> [ <IS> ] DataName())
+    [ <SYMBOLIC> ] <DESTINATION> [ <IS> ] DataName()
+  | <DESTINATION> <TABLE> <OCCURS> IntegerConstant() [ <TIMES> ] [ <INDEXED> [ <BY> ] ( IndexName() [<COMMACHAR>] )+ ]
+  | <ERROR> <KEY> [ <IS> ] DataName()
+}
+
+void CommunicationIOClause() :
+{}
+{
+    <MESSAGE> ( <DATE> | <TIME> ) [ <IS> ] DataName()
+  | <TEXT> <LENGTH> [ <IS> ] DataName()
+  | <END> <KEY> [ <IS> ] DataName()
+  | <STATUS> <KEY> [ <IS> ] DataName()
+  | [ <SYMBOLIC> ] <TERMINAL> [ <IS> ] DataName()
+}
+
+//-------------------------------------------------------------
+
+void FileSection() :
+{}
+{
+  ( (<FILE> <SECTION> <DOT>) | (FileAndSortDescriptionEntry() ( DataDescriptionEntry() )+) )
+  ( LOOKAHEAD( <FD> | <SD> ) FileAndSortDescriptionEntry() ( DataDescriptionEntry() )+ )*
+}
+
+void FileAndSortDescriptionEntry() :
+{}
+{
+  ( <FD> | <SD> ) FileName() ( /*[ <DOT> ]*/ FileAndSortDescriptionEntryClause() )* <DOT>
+}
+
+void FileAndSortDescriptionEntryClause() :
+{}
+{
+    ExternalClause()
+  | GlobalClause()
+  | BlockContainsClause()
+  | RecordContainsClause()
+  | LabelRecordsClause()
+  | ValueOfClause()
+  | DataRecordClause()
+  | LinageClause()
+  | CodeSetClause()
+  | ReportClause()
+  | RecordingModeClause()
+}
+
+void  ExternalClause() :
+{}
+{
+  [ <IS> ] <EXTERNAL>
+}
+
+void GlobalClause() :
+{}
+{
+  [ <IS> ] <GLOBAL>
+}
+
+void BlockContainsClause() :
+{}
+{
+  <BLOCK> [ <CONTAINS> ] [ IntegerConstant() <TO> ] IntegerConstant() [ <RECORDS> | <CHARACTERS> ]
+}
+
+void RecordContainsClause() :
+{}
+{
+  <RECORD> [ <CONTAINS> ]
+  ( [ IntegerConstant() <TO> ] IntegerConstant() [ <CHARACTERS> ]
+  | [ <IS> ] <VARYING> [ <IN> ] [ <SIZE> ]
+    [ [ <FROM> ] IntegerConstant() [ <TO> IntegerConstant() ] [<CHARACTERS>] ]
+    [ <DEPENDING> [ <ON> ] QualifiedDataName() ]
+  )
+}
+
+void LabelRecordsClause() :
+{}
+{
+  <LABEL> ( <RECORD> [ <IS> ]
+          | <RECORDS> [ <ARE> ]
+          ) (<OMITTED> | <STANDARD> | ( DataName() )+)
+}
+
+void ValueOfClause() :
+{
+  //System.out.println("Deprecated clause : value of");
+}
+{
+  <VALUE> <OF> ( SystemName() <IS> ( QualifiedDataName() | Literal() ) )+
+}
+
+void DataRecordClause() :
+{
+  //System.out.println("Deprecated clause : data record");
+}
+{
+  <DATA> ( <RECORD> [ <IS> ]
+         | <RECORDS> [ <ARE> ]
+         ) ( DataName() [<COMMACHAR>])+
+}
+
+void LinageClause() :
+{}
+{
+  <LINAGE> [ <IS> ] ( DataName() | IntegerConstant() ) [ <LINES> ]
+  ( [ <WITH> ] <FOOTING> [ <AT> ] ( DataName() | IntegerConstant() )
+  | LOOKAHEAD([ <LINES> ] [ <AT> ] <TOP>)[ <LINES> ] [ <AT> ] <TOP> ( DataName() | IntegerConstant() )
+  | LOOKAHEAD([ <LINES> ] [ <AT> ] <BOTTOM>)[ <LINES> ] [ <AT> ] <BOTTOM> ( DataName() | IntegerConstant() )
+  )*
+}
+
+void RecordingModeClause() :
+{}
+{
+  <RECORDING> [ <MODE> ] [ <IS> ] Mode()
+}
+
+void CodeSetClause() :
+{}
+{
+  <CODE_SET> [ <IS> ] AlphabetName()
+}
+
+void ReportClause() :
+{}
+{
+  ( <REPORT> [ <IS> ] | <REPORTS> [ <ARE> ] ) ( QualifiedDataName() )+
+}
+
+void DataDescriptionEntry() :
+{}
+{ 	
+  (  LevelNumber() 
+  		( DataName() | <FILLER> )?
+  		( DataDescriptionEntryClause() 
+  		)* <DOT>
+  | <LEVEL_66> 
+  		DataName()
+  		RenamesClause() <DOT>
+  | <LEVEL_77> 
+  		DataName()
+  		( DataDescriptionEntryClause() 
+  		)* <DOT>
+  | <LEVEL_78>  ConditionName()	ConditionValueClause() <DOT>
+  | <LEVEL_88> ConditionName()	ConditionValueClause() <DOT>
+  | ( <EXEC> | <EXECUTE> ) <K_SQL> 
+  	(
+	  	<K_INCLUDE> (<S_IDENTIFIER> |<S_QUOTED_IDENTIFIER>)   <DOT>
+	  	|<K_BEGIN> <K_DECLARE> <K_SECTION>  <END_EXEC> <DOT>
+		|<K_END> <K_DECLARE> <K_SECTION>  <END_EXEC> <DOT>
+		|DeclareCursorStatement() <END_EXEC> <DOT> 
+	)
+	 
+  
+  )
+}
+
+void DataDescriptionEntryClause() :
+{}
+{
+[<COMMACHAR>]
+   (LOOKAHEAD( <PICTURE> | <PIC> ) DataPictureClause() 
+  | LOOKAHEAD( <VALUE> [ <IS> ] | <VALUES> [ <ARE> ]) DataValueClause()
+  | LOOKAHEAD(DataUsageClause() ) DataUsageClause()
+  |  LOOKAHEAD( <REDEFINES> )DataRedefinesClause()
+  |  LOOKAHEAD( DataExternalClause())DataExternalClause()
+  | LOOKAHEAD( DataGlobalClause())DataGlobalClause()
+  |LOOKAHEAD( DataSignClause() ) DataSignClause()
+  |LOOKAHEAD( <OCCURS>) DataOccursClause()
+  | LOOKAHEAD( DataSynchronizedClause() )DataSynchronizedClause()
+  |LOOKAHEAD( <JUSTIFIED> | <JUST> ) DataJustifiedClause()
+  | LOOKAHEAD( DataBlankWhenZeroClause())DataBlankWhenZeroClause()
+  ) [<COMMACHAR>]
+}
+
+void DataRedefinesClause() :
+{}
+{
+  <REDEFINES> DataName()
+}
+
+void DataBlankWhenZeroClause() :
+{}
+{
+  <BLANK> [ <WHEN> ] ( <ZERO> | <ZEROS> | <ZEROES> )
+}
+
+void DataJustifiedClause() :
+{}
+{
+  ( <JUSTIFIED> | <JUST> ) [ <RIGHT> ]
+}
+
+void DataOccursClause() :
+{}
+{
+  <OCCURS> [ (IntegerConstant() | DataName()) <TO> ] (IntegerConstant() | DataName()) [ <TIMES> ]
+  [ <DEPENDING> [ <ON> ] QualifiedDataName() ]
+  ( ( <ASCENDING> | <DESCENDING> ) [ <KEY> ] [ <IS> ] ( QualifiedDataName() )+ )*
+  [ <INDEXED> [ <BY> ] ( IndexName()  [<COMMACHAR>])+ ]
+}
+
+void DataPictureClause() :
+{}
+{
+  ( <PICTURE> | <PIC> ) [ <IS> ] PictureString() [<VARYING>]
+}
+
+void PictureString() :
+{}
+{
+  PictureOccurence() ( LOOKAHEAD(<DOTCHAR> PictureOccurence()) <DOTCHAR> PictureOccurence() | PictureOccurence() )*
+  // There can be additional dots at end of picture strings ...
+  ( <DOTCHAR> )*
+}
+
+void PictureOccurence() :
+{}
+{
+    ( NonDotChars() )+ [ <LPARENCHAR> (IntegerConstant()|DataName()) <RPARENCHAR> ]
+  | <DOTCHAR> ( <LPARENCHAR> (IntegerConstant()|DataName()) <RPARENCHAR> | NonDotChars() )
+}
+
+void PicturePunctuation() :
+{}
+{
+  <SLASHCHAR> | <COMMACHAR> | <COLONCHAR> | <ASTERISKCHAR> | <MINUSCHAR> | <PLUSCHAR> |
+  <POW> | <LESSTHANOREQUAL> | <LESSTHANCHAR> | <MORETHANOREQUAL> | <MORETHANCHAR> |
+  <EQUALCHAR> | <NOTEQUALCHAR>
+}
+
+void PictureCurrency() :
+{}
+{
+  <DOLLARCHAR> // to be completed
+}
+
+void NonDotChars() :
+{}
+{
+  IntegerConstant() | CobolWord() | PicturePunctuation() | PictureCurrency()
+}
+
+/*
+void DataPictureClause() :
+{}
+{
+  ( <PICTURE> | <PIC> ) [ <PICTURE_IS> ] <PICTURE_STRING> [<VARYING>]
+}
+*/
+
+void DataExternalClause() :
+{}
+{
+  [ <IS> ] <EXTERNAL>
+}
+
+void DataGlobalClause() :
+{}
+{
+  [ <IS> ] <GLOBAL>
+}
+
+void DataUsageClause() :
+{}
+{
+ [ <USAGE> [ <IS> ] ] ( 
+ <BINARY> | <COMP> | <COMP_1> | <COMP_2> | <COMP_3> | <COMP_4> | <COMP_5> | 
+ <COMPUTATIONAL> | <COMPUTATIONAL_1> | <COMPUTATIONAL_2> | <COMPUTATIONAL_3> | 
+ <COMPUTATIONAL_4> | <COMPUTATIONAL_5> | <DISPLAY> | <DISPLAY_1> | <INDEX> | 
+ <PACKED_DECIMAL> | <POINTER> | <FUNCTION_POINTER> | <PROCEDURE_POINTER> | 
+ <OBJECT> <REFERENCE> DataName()
+ )
+}
+
+void DataSignClause() :
+{}
+{
+ [ <SIGN> [ <IS> ] ] ( <LEADING> | <TRAILING> ) [ <SEPARATE> [ <CHARACTER> ] ]
+}
+
+void DataSynchronizedClause() :
+{}
+{
+  ( <SYNCHRONIZED> | <SYNC> ) [ ( <LEFT> | <RIGHT> ) ]
+}
+
+void DataValueClause() :
+{}
+{
+ ( <VALUE> [ <IS> ] | <VALUES> [ <ARE> ] ) ( (Identifier()|Literal()) [<COMMACHAR>]
+ 	[ LOOKAHEAD(<THROUGH> | <THRU>)( <THROUGH> | <THRU> ) 
+ 		Literal() [<COMMACHAR>]
+ 	] )+
+}
+
+/*
+void DataValueClause() :
+{}
+{
+  // TODO (SUPPRESS) : Dirty hack : Literal() --> PictureString() | IterableLiteral()
+  ( <VALUE> [ <IS> ] | <VALUES> [ <ARE> ] ) ( ( LOOKAHEAD(PictureString()) PictureString() | Literal() ) [ ( <THROUGH> | <THRU> ) Literal() ] )+
+}
+*/
+void ConditionValueClause() :
+{}
+{
+ DataValueClause()
+}
+
+void RenamesClause() :
+{}
+{
+  <RENAMES> QualifiedDataName() [ ( <THROUGH> | <THRU> ) QualifiedDataName() ]
+}
+
+//------------------------------------------------------------------------------
+// WORKING STORAGE SECTION, LINKAGE SECTION.
+//------------------------------------------------------------------------------
+
+void WorkingStorageSection() :
+{}
+{
+  <WORKING_STORAGE> <SECTION> <DOT>
+  ( DataDescriptionEntry() )*
+}
+
+void LinkageSection() :
+{}
+{
+  <LINKAGE> <SECTION> <DOT>
+  ( DataDescriptionEntry() )*
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// PROCEDURE DIVISION also known as "spaghetti division".
+////////////////////////////////////////////////////////////////////////////////
+
+void ProcedureDivision() :
+{}
+{
+  (<PROCEDURE> <DIVISION> |<PROCEDURE_DIVISION>)[LOOKAHEAD([<DOT>] <USING>)[<DOT>] UsingArgs() ] <DOT>
+  [ Declaratives() ]
+  ProcedureBody()
+}
+void UsingArgs() :
+{}
+{
+	<USING> ( [[LOOKAHEAD(<BY>)<BY>] (<REFERENCE>|<VALUE>) ] QualifiedDataName() [<COMMACHAR>] )+
+}
+void Declaratives() :
+{}
+{
+  <DECLARATIVES> <DOT>
+  ( SectionHeader() <DOT>
+    UseStatement() <DOT>
+    Paragraphs()
+  )+
+  <END> <DECLARATIVES> <DOT>
+}
+
+void ProcedureBody() :
+{}
+{
+  Paragraphs() ( ProcedureSection() )*
+}
+
+void ProcedureSection() :
+{}
+{
+  SectionHeader() <DOT> Paragraphs()
+}
+
+void SectionHeader() :
+{}
+{
+  SectionName() <SECTION> [ IntegerConstant() ]
+}
+
+void Paragraphs() :
+{}
+{
+  ( Sentence() )* ( Paragraph() )*
+}
+
+void Paragraph() :
+{}
+{
+  (ParagraphName()| EntryStatement()) <DOT>
+  ( LOOKAHEAD(ExitProgramStatement() <DOT>) ExitProgramStatement() <DOT>
+  |  LOOKAHEAD(ExitStatement() <DOT>) ExitStatement() <DOT>
+  | LOOKAHEAD(AlteredGoto()) AlteredGoto()
+  | ( Sentence() )*
+  )
+}
+
+void Sentence() :
+{}
+{
+  (Statement())+ <DOT>
+}
+
+void StatementList() :
+{}
+{
+  ( Statement() )+
+}
+
+void Statement() :
+{}
+{
+//try {
+  ( AcceptStatement()
+  | AddStatement()
+  | AlterStatement()
+  | CallStatement()
+  | CancelStatement()
+  | CloseStatement()
+  | ComputeStatement()
+  | ContinueStatement()
+  | DeleteStatement()
+  | DisplayStatement()
+  | DivideStatement()
+  //| EntryStatement()
+  | EvaluateStatement()
+  | LOOKAHEAD(ExitProgramStatement()) ExitProgramStatement()
+  | ExitStatement() 
+  | GobackStatement()
+  | GotoStatement()
+  | IfStatement()
+  | InitializeStatement()
+  | InspectStatement()
+  | MergeStatement()
+  | MoveStatement()
+  | MultiplyStatement()
+  | OpenStatement()
+  | PerformStatement()
+  | ReadStatement()
+  | ReleaseStatement()
+  | ReturnStatement()
+  | RewriteStatement()
+  | SearchStatement()
+  | SetStatement()
+  | SortStatement()
+  | StartStatement()
+  | StopStatement()
+  | StringStatement()
+  | SubtractStatement()
+  | UnstringStatement()
+  | WriteStatement() 
+  | ExecSqlStatement()
+  //Old Statements
+  | EnableStatement()
+  | DisableStatement()
+  | ReceiveStatement()
+  | SendStatement()
+  )[<COMMACHAR>]
+ //} catch(ParseException e) {
+ 	//error_skipto(DOT)
+ //}
+}
+
+void EnableStatement() :
+{}
+{
+<ENABLE> (<INPUT> [<TERMINAL>]|<OUTPUT>) (Identifier() | Literal()) [<WITH>] <KEY> (Identifier() | Literal())
+} 
+void DisableStatement() :
+{}
+{
+<DISABLE> (<INPUT> [<TERMINAL>] |<OUTPUT>) (Identifier() | Literal()) [<WITH>] <KEY> (Identifier() | Literal()) 
+}
+void ReceiveStatement() :
+{}
+{
+<RECEIVE> (Identifier() | Literal()) (<MESSAGE>|<SEGMENT>) <INTO> Identifier() [";"|<NO> <DATA> Statement()] 
+}
+void SendStatement() :
+{}
+{
+<SEND> (Identifier()|Literal())
+	   [<FROM> Identifier() ] 
+	  
+[<WITH> (Identifier()|<ESI>|<EMI>|<EGI>) 	]
+
+[		(<BEFORE>|<AFTER>)	[<ADVANCING>] 
+			( ( (Identifier()|Literal()) [<LINE>|<LINES>] )|(MnemonicName()|<PAGE>))
+		
+]  
+}
+
+
+void ExecSqlStatement() :
+{}
+{
+	 ( <EXEC> | <EXECUTE> ) <K_SQL>
+	 (
+	 	LOOKAHEAD(<K_WHENEVER>) 
+	 	<K_WHENEVER> (<K_NOT> <K_FOUND> | <K_SQLERROR> | <K_SQLWARNING> ) Statement() 
+	 	|(
+			(
+				LOOKAHEAD(SQLStatement())SQLStatement()  |
+				LOOKAHEAD(DeclareCursorStatement())DeclareCursorStatement() |
+				LOOKAHEAD(<K_PREPARE> <S_IDENTIFIER> <K_FROM> <S_BIND>) 
+					<K_PREPARE> <S_IDENTIFIER> <K_FROM> <S_BIND>  |
+				LOOKAHEAD(<K_ALTER> <K_SESSION> SQLSetStatement())
+					<K_ALTER> <K_SESSION> SQLSetStatement() 	| 	
+				LOOKAHEAD(<K_EXECUTE>)
+					<K_EXECUTE> SkipToEndExec() |
+				LOOKAHEAD(<K_CONNECT> <S_BIND>)<K_CONNECT> <S_BIND> |
+				SkipToEndExec()
+			) 
+			<END_EXEC> 
+		)
+	)
+}
+void DeclareCursorStatement() :
+{}
+{
+		<K_DECLARE> <S_IDENTIFIER> <K_CURSOR> <K_FOR> (<S_IDENTIFIER>|QueryStatement())
+
+}
+void AcceptStatement() :
+{}
+{
+  <ACCEPT> Identifier() 
+  [<FROM>( 
+			MnemonicName()
+		  | EnvironmentName()
+		  | <DATE> [<COBOL_WORD>]
+		  | <DAY> [<COBOL_WORD>]
+		  | <DAY_OF_WEEK>
+		  | <TIME>
+	  )
+   | [<MESSAGE>] <COUNT>  //Old Statements
+   
+  ]
+}
+
+void AddStatement() :
+{}
+{
+  <ADD> AddBody() 
+  	[LOOKAHEAD([ <ON> ] <SIZE> <ERROR>)[ <ON> ] <SIZE> <ERROR> StatementList() ] 
+  	[LOOKAHEAD( <NOT>  [ <ON> ] <SIZE> <ERROR>) <NOT>  [ <ON> ] <SIZE> <ERROR> StatementList() ]
+	[<END_ADD>]
+}
+
+void AddBody() :
+{}
+{
+  LOOKAHEAD(IdOrLiteralList() [<TO> IdOrLiteral()] <GIVING>) IdOrLiteralList() [<TO> IdOrLiteral()] <GIVING> ArithIdentifierList()
+|  LOOKAHEAD(IdOrLiteralList() <TO> ArithIdentifierList())	IdOrLiteralList() <TO> ArithIdentifierList()
+| (<CORRESPONDING>|<CORR>) Identifier() <TO> Identifier() [<ROUNDED>]
+}
+
+void ArithIdentifier() :
+{}
+{
+	Identifier() [<ROUNDED>]
+}
+
+void ArithIdentifierList() :
+{}
+{
+	(ArithIdentifier() [<COMMACHAR>] )+
+}
+
+
+void IdOrLiteral() :
+{}
+{
+	Identifier() | Literal()
+}
+
+void IdOrLiteralList() :
+{}
+{
+	(IdOrLiteral() [<COMMACHAR>])+
+}
+
+void AlteredGoto() :
+{
+  //System.out.println("***ALTER ALERT***");
+}
+{
+  <GO> [ <TO> ] <DOT>
+}
+
+/**
+ * ALTER is one of the most dangerous statement ever invented by man.
+ * ALTER is to GOTO what an atomic bomb is to firecrackers.
+ */
+
+void AlterStatement() :
+{
+  //System.out.println("***ALTER ALERT***");
+}
+{
+  <ALTER> ( ProcedureName() <TO> [ <PROCEED> <TO> ] ProcedureName() [<COMMACHAR>] )+
+}
+
+void CallStatement() :
+{}
+{
+  <CALL> ( Identifier() | Literal() )
+  [ <USING> ( ( [ [ <BY> ] <REFERENCE> ] ( CallByReferenceArgs() [<COMMACHAR>])+ | [ <BY> ] (<CONTENT>|<VALUE>) ( CallByContentArgs()  [<COMMACHAR>])+ ) )+ ]
+  //[<RETURNING> Identifier()]
+  [LOOKAHEAD([ <ON> ] <OVERFLOW>) [ <ON> ] <OVERFLOW> StatementList() ]
+  [LOOKAHEAD([ <ON> ] <EXCEPTION>) [ <ON> ] <EXCEPTION> StatementList() ]
+  [LOOKAHEAD(<NOT> [ <ON> ] <EXCEPTION>) <NOT> [ <ON> ] <EXCEPTION> StatementList() ]
+  [ <END_CALL> ]
+}
+
+void CallByReferenceArgs() :
+{}
+{
+ Identifier() | <ADDRESS> <OF> Identifier() | FileName() 
+}
+void CallByContentArgs() :
+{}
+{
+ [ <LENGTH> <OF> ] Identifier() | <ADDRESS> <OF> Identifier() | Literal() 
+}
+void CancelStatement() :
+{}
+{
+  <CANCEL> ( (Identifier() | Literal()) [<COMMACHAR>] )+
+}
+
+void CloseStatement() :
+{}
+{
+  <CLOSE>
+  ( FileName()
+            [ ( ( <REEL> | <UNIT> ) [ ( [ <FOR> ] <REMOVAL>
+                                      | [ <WITH> ] <NO> <REWIND>
+                                      )
+                                    ]
+              | [ <WITH> ] ( <NO> <REWIND> | <LOCK> )
+              )
+            ]
+  [<COMMACHAR>])+
+}
+
+void ComputeStatement() :
+{}
+{
+  <COMPUTE> ( Identifier() [ <ROUNDED> ] )+
+            ( <EQUALCHAR> | <EQUAL> )
+            ArithmeticExpression()
+  	[LOOKAHEAD([ <ON> ] <SIZE> <ERROR>)[ <ON> ] <SIZE> <ERROR> StatementList() ] 
+  	[LOOKAHEAD( <NOT>  [ <ON> ] <SIZE> <ERROR>) <NOT>  [ <ON> ] <SIZE> <ERROR> StatementList() ]
+ [<END_COMPUTE> ]
+
+}
+
+void ContinueStatement() :
+{}
+{
+  <CONTINUE>
+}
+
+void DeleteStatement() :
+{}
+{
+  <DELETE> FileName() [ <RECORD> ]
+  [ <INVALID> [ <KEY> ] StatementList() ]
+  [ <NOT> <INVALID> [ <KEY> ] StatementList() ]
+  [ <END_DELETE> ]
+}
+
+void DisplayStatement() :
+{}
+{
+  <DISPLAY> ( (Identifier() | Literal()) [<COMMACHAR>])+
+  [ <UPON> ( MnemonicName() | EnvironmentName() ) ]
+  [ [ <WITH> ] <NO> <ADVANCING> ]
+}
+
+void DivideStatement() :
+{}
+{ 
+	<DIVIDE> DivideBody()
+  	[LOOKAHEAD([ <ON> ] <SIZE> <ERROR>)[ <ON> ] <SIZE> <ERROR> StatementList() ] 
+  	[LOOKAHEAD( <NOT>  [ <ON> ] <SIZE> <ERROR>) <NOT>  [ <ON> ] <SIZE> <ERROR> StatementList() ]
+  [ <END_DIVIDE> ]
+}
+void DivideBody() :
+{}
+{
+	(
+	LOOKAHEAD(IdOrLiteral() <INTO>)
+	 IdOrLiteral() <INTO> (LOOKAHEAD(IdOrLiteral() <GIVING>)IdOrLiteral()|ArithIdentifierList() ) 
+	 		[ <GIVING> ArithIdentifierList() [<REMAINDER> ArithIdentifier()]] |
+	LOOKAHEAD(IdOrLiteral() <BY>)
+	 IdOrLiteral() <BY> IdOrLiteral() <GIVING> ArithIdentifierList() [<REMAINDER> ArithIdentifier()]  
+	 )
+}
+
+void EntryStatement() :
+{}
+{
+  <ENTRY> Literal() [LOOKAHEAD(<USING>) UsingArgs() ] 
+}
+
+void EvaluateStatement() :
+{}
+{
+  <EVALUATE> EvaluateValue()
+  ( <ALSO> EvaluateValue() )*
+  ( ( <WHEN> [<EQUALCHAR>] EvaluatePhrase() ( <ALSO> EvaluatePhrase() )* )+ StatementList() )+
+  [ <WHEN> <OTHER> StatementList() ]
+  [ <END_EVALUATE> ]
+
+}
+
+void EvaluateValue() :
+{}
+{
+  (
+    Identifier()
+  | LOOKAHEAD(Condition())Condition()
+  | LOOKAHEAD(ArithmeticExpression()) ArithmeticExpression()
+  | Literal()
+  | <TRUE>
+  | <FALSE>
+  )
+}
+
+void EvaluatePhrase() :
+{}
+{
+  ( <ANY>
+  | [<NOT> ] (  LOOKAHEAD(Identifier(),{notFollowedByRelOp()})
+  							Identifier() | 
+  						  LOOKAHEAD(Literal(),{notFollowedByRelOp()})	
+  						  	Literal() | 
+  						  LOOKAHEAD(ArithmeticExpression(),{notFollowedByRelOp()})
+  							ArithmeticExpression() )
+	  //[<NOT> ] ( Identifier() | Literal() | ArithmeticExpression() ) 
+  	  [ ( <THROUGH> | <THRU> ) (
+  	  LOOKAHEAD(Identifier(),{notFollowedByRelOp()}) 
+  	  		Identifier() |
+	  LOOKAHEAD(Literal(),{notFollowedByRelOp()}) 
+  	  		Literal() |
+  	  		ArithmeticExpression() ) ]
+  | LOOKAHEAD( Condition() )Condition() 
+  | <TRUE>
+  | <FALSE>
+ )
+}
+
+void ExitStatement() :
+{}
+{
+  <EXIT>
+}
+
+void ExitProgramStatement() :
+{}
+{
+  <EXIT> <PROGRAM>
+}
+
+void GobackStatement() :
+{}
+{
+  <GOBACK>
+}
+
+void GotoStatement() :
+{}
+{
+  <GO> [ <TO> ]
+  ( ProcedureName()  [ LOOKAHEAD((ProcedureName())* <DEPENDING>) (ProcedureName())* <DEPENDING> [ <ON> ] Identifier() ]
+  | <MORE_LABELS> // ??? IBM extension ???
+  )
+}
+
+void IfStatement() :
+{}
+{
+  <IF> Condition() [ <THEN> ] (StatementList()  [<NEXT> <SENTENCE>] | <NEXT> <SENTENCE>)
+  [  LOOKAHEAD(1) <ELSE> (StatementList()  [<NEXT> <SENTENCE>] | <NEXT> <SENTENCE>)]
+  [ <END_IF> ]
+
+}
+
+void InitializeStatement() :
+{}
+{
+  <INITIALIZE> ( Identifier() [<COMMACHAR>] )+
+  [ <REPLACING> ( ( <ALPHABETIC>
+                  | <ALPHANUMERIC>
+                  | <NUMERIC>
+                  | <ALPHANUMERIC_EDITED>
+                  | <NUMERIC_EDITED>
+                  | <DBCS>
+                  | <EGCS>
+                  ) [ <DATA> ] <BY> ( Identifier() | Literal() [<COMMACHAR>])
+                )+
+  ]
+
+}
+
+void InspectStatement() :
+{}
+{
+  <INSPECT> Identifier()
+  ( TallyingPhrase()
+  | ConvertingPhrase()
+  | ReplacingPhrase()
+  )
+}
+
+void TallyingPhrase() :
+{}
+{
+  <TALLYING>
+  ( Identifier() <FOR> ( <CHARACTERS> ( BeforeAfterPhrase() )*  | 
+  						 ( <ALL> | <LEADING> ) 
+  						 		( 
+  						 			( Identifier() | Literal() ) ( BeforeAfterPhrase() )*
+            	                )+
+                       )+
+  )+
+  [ ReplacingPhrase() ]
+}
+
+void ConvertingPhrase() :
+{}
+{
+  <CONVERTING> ( Identifier() | Literal() )
+  <TO> ( Identifier() | Literal() ) ( BeforeAfterPhrase() )*
+}
+
+void ReplacingPhrase() :
+{}
+{
+  <REPLACING>
+  ( 
+	  	<CHARACTERS> <BY> 
+	  		( Identifier() | Literal() ) ( BeforeAfterPhrase() )*
+	  | ( <ALL> | <LEADING> | <FIRST> ) 
+	  		( ( Identifier() | Literal() )
+	                          <BY> ( Identifier() | Literal() )
+	                                      ( BeforeAfterPhrase() )*
+	        )+
+  )+
+}
+
+void BeforeAfterPhrase() :
+{}
+{
+  ( <BEFORE> | <AFTER> ) [ <INITIAL> ] ( Identifier() | Literal() )
+}
+
+void MergeStatement() :
+{}
+{
+  <MERGE> FileName()
+  ( [ <ON> ] ( <ASCENDING> | <DESCENDING> ) [ <KEY> ] ( QualifiedDataName() [<COMMACHAR>])+ )+
+  [ [ <COLLATING> ] <SEQUENCE> [ <IS> ] AlphabetName() ] <USING> FileName() ([<COMMACHAR>] FileName() )+
+  ( <OUTPUT> <PROCEDURE> [ <IS> ] ProcedureName() [ ( <THROUGH> | <THRU> ) ProcedureName() ]
+  | <GIVING> ( FileName() )+
+  )
+}
+
+/**
+ * MOVE is probably the first polymorphic statement in the history of computing.
+ */
+
+void MoveStatement() :
+{}
+{
+  <MOVE>
+  ( ( Identifier() | Literal() ) <TO> ( Identifier() [<COMMACHAR>] )+
+  | ( <CORRESPONDING> | <CORR> ) Identifier() <TO> ( Identifier() [<COMMACHAR>])+
+  )
+}
+void MultiplyStatement() :
+{}
+{
+  <MULTIPLY> MultiplyBody() 
+  	[LOOKAHEAD([ <ON> ] <SIZE> <ERROR>)[ <ON> ] <SIZE> <ERROR> StatementList() ] 
+  	[LOOKAHEAD( <NOT>  [ <ON> ] <SIZE> <ERROR>) <NOT>  [ <ON> ] <SIZE> <ERROR> StatementList() ]
+  [<END_MULTIPLY>]
+}
+
+void MultiplyBody() :
+{}
+{
+  IdOrLiteral() <BY> (LOOKAHEAD(IdOrLiteral() <GIVING>)	IdOrLiteral() <GIVING> ArithIdentifierList() |
+  						ArithIdentifierList()
+  					)
+}
+
+void OpenStatement() :
+{}
+{
+ <OPEN> ( <INPUT> ( FileName() [ ( <REVERSED> | [ <WITH> ] <NO> <REWIND> ) ] [<COMMACHAR>])+
+        | <OUTPUT> ( FileName() [ [ <WITH> ] <NO> <REWIND> ] [<COMMACHAR>])+
+        | <I_O> ( FileName() [<COMMACHAR>])+
+        | <EXTEND> ( FileName() [<COMMACHAR>])+
+        )+
+}
+
+/**
+ * The "one-size-fits-all" statement of COBOL: it replaces for, while, call...
+ */
+
+/*
+ * PERFORM statement
+ */
+
+void PerformStatement():
+{}
+{
+  <PERFORM>  PerformBody()
+}
+
+void PerformBody():
+{}
+{
+LOOKAHEAD(5)
+   [PerformOption()] [StatementList()] <END_PERFORM>
+ | PerformProcedure() [PerformOption()]
+
+}
+
+void PerformProcedure():
+{}
+{
+ ProcedureName() [(<THRU>|<THROUGH>) ProcedureName()]
+}
+
+void BeforeOrAfter():
+{}
+{
+  <BEFORE>
+| <AFTER>
+}
+
+
+void PerformOption():
+{}
+{
+  LOOKAHEAD((Identifier() | Literal() )<TIMES>)
+  (Identifier() | Literal() )<TIMES>
+| LOOKAHEAD([PerformTest()] <UNTIL>)[PerformTest()] <UNTIL> Condition()
+| LOOKAHEAD([PerformTest()] <VARYING>) [PerformTest()] <VARYING> PerformVaryingList()
+}
+
+void PerformTest():
+{}
+{
+ [<WITH>] <TEST> BeforeOrAfter()
+}
+
+void PerformVaryingList():
+{}
+{
+  PerformVarying() (<AFTER>  PerformVarying() [<COMMACHAR>] )*
+}
+
+void PerformVarying():
+{}
+{
+  Identifier() <FROM> IdOrLiteral() <BY> IdOrLiteral() <UNTIL> Condition()
+}
+
+//
+void ReadStatement() :
+{}
+{
+  <READ> FileName() [ <NEXT> ] [ <RECORD> ]
+  [ <INTO> Identifier() ]
+  [ <KEY> [ <IS> ] QualifiedDataName() ]
+  [ <INVALID> [ <KEY> ] StatementList() ]
+  [ <NOT> <INVALID> [ <KEY> ] StatementList() ]
+  [ [ <AT> ] <END> StatementList() ]
+  [ <NOT> [ <AT> ] <END> StatementList() ]
+  [ <END_READ> ]
+}
+
+void ReleaseStatement() :
+{}
+{
+  <RELEASE> RecordName() [ <FROM> QualifiedDataName() ]
+}
+
+void ReturnStatement() :
+{}
+{
+  <RETURN> FileName() [ <RECORD> ] [ <INTO> QualifiedDataName() ]
+  [ <AT> ] <END> StatementList()
+  [ <NOT> [ <AT> ] <END> StatementList() ]
+  [ <END_RETURN> ]
+
+}
+
+void RewriteStatement() :
+{}
+{
+  <REWRITE> RecordName() [ <FROM> Identifier() ]
+  [ <INVALID> [ <KEY> ] StatementList() ]
+  [ <NOT> <INVALID> [ <KEY> ] StatementList() ]
+  [ <END_REWRITE> ]
+}
+
+void SearchStatement() :
+{}
+{
+  <SEARCH> [ <ALL> ] QualifiedDataName()
+  [ <VARYING> QualifiedDataName() ]
+  [ [ <AT> ] <END> StatementList() ]
+  ( <WHEN> Condition() ( StatementList() | <NEXT> <SENTENCE> ) )+
+  [ <END_SEARCH> ]
+}
+
+void SetStatement() :
+{}
+{
+  <SET> ((Identifier() [<COMMACHAR>])+
+  ( <TO> ( Identifier() | <TRUE> | <FALSE> | <ON> | <OFF> | Literal() )
+  | ( <UP> | <DOWN> ) [ <BY> ] ( Identifier() | Literal() )
+  ))+
+}
+
+void SortStatement() :
+{}
+{
+  <SORT> FileName()
+  ( [ <ON> ] ( <ASCENDING> | <DESCENDING> ) [ <KEY> ] ( QualifiedDataName() [<COMMACHAR>])+ )+
+  [ [ <WITH> ] <DUPLICATES> [ <IN> ] [ <ORDER> ] ]
+  [ [ <COLLATING> ] <SEQUENCE> [ <IS> ] AlphabetName() ]
+  ( <USING> ( FileName() )+ | <INPUT> <PROCEDURE> [ <IS> ] ProcedureName() [ ( <THROUGH> | <THRU> ) ProcedureName() ] )
+  ( <GIVING> ( FileName() )+ | <OUTPUT> <PROCEDURE> [ <IS> ] ProcedureName() [ ( <THROUGH> | <THRU> ) ProcedureName() ] )
+}
+
+void StartStatement() :
+{}
+{
+  <START> FileName()
+  [ <KEY> [ <IS> ] ( <EQUAL> [ <TO> ]
+                   | <EQUALCHAR>
+                   | LOOKAHEAD(<GREATER> [ <THAN> ] <OR> <EQUAL> [ <TO> ])
+                   	<GREATER> [ <THAN> ] <OR> <EQUAL> [ <TO> ]
+                   | <GREATER> [ <THAN> ]
+                   | <MORETHANCHAR>
+                   | <NOT> <LESS> [ <THAN> ]
+                   | <NOT> <LESSTHANCHAR>
+                   | <MORETHANOREQUAL>
+                   ) QualifiedDataName() ]
+  [ <INVALID> [ <KEY> ] StatementList() ]
+  [ <NOT> <INVALID> [ <KEY> ] StatementList() ]
+  [ <END_START> ]
+
+}
+
+void StopStatement() :
+{}
+{
+  <STOP> ( <RUN> | Literal() )
+}
+
+void StringStatement() :
+{}
+{
+  <STRING>
+  ( ( Identifier() | Literal() )+ [<DELIMITED> [ <BY> ] ( Identifier() | Literal() | <SIZE> )] )+
+  <INTO> Identifier()
+  [ [ <WITH> ] <POINTER> QualifiedDataName() ]
+  [ [ <ON> ] <OVERFLOW> StatementList() ]
+  [ <NOT> [ <ON> ] <OVERFLOW> StatementList() ]
+  [ <END_STRING> ]
+
+}
+
+void SubtractStatement() :
+{}
+{
+  <SUBTRACT>
+    (IdOrLiteralList() <FROM> (
+    	LOOKAHEAD(IdOrLiteral() <GIVING>) IdOrLiteral() <GIVING> ArithIdentifierList() |
+    		 ArithIdentifierList())
+  | ( <CORRESPONDING> | <CORR> ) QualifiedDataName() <FROM> QualifiedDataName()
+  )
+  	[LOOKAHEAD([ <ON> ] <SIZE> <ERROR>)[ <ON> ] <SIZE> <ERROR> StatementList() ] 
+  	[LOOKAHEAD( <NOT>  [ <ON> ] <SIZE> <ERROR>) <NOT>  [ <ON> ] <SIZE> <ERROR> StatementList() ]
+  [ <END_SUBTRACT> ]
+}
+
+void UnstringStatement() :
+{}
+{
+  <UNSTRING> Identifier()
+  [ <DELIMITED> [ <BY> ] [ <ALL> ] ( Identifier() | Literal() ) ( <OR> [ <ALL> ] ( Identifier() | Literal() ) )* ]
+  <INTO>
+ ( Identifier() [ <DELIMITER> [ <IN> ] Identifier() ] [ <COUNT> [ <IN> ] Identifier() ] [<COMMACHAR>])+
+  [ [ <WITH> ] <POINTER> QualifiedDataName() ] [ <TALLYING> [ <IN> ] QualifiedDataName() ]
+  [ [ <ON> ] <OVERFLOW> StatementList() ]
+  [ <NOT> [ <ON> ] <OVERFLOW> StatementList() ]
+  [ <END_UNSTRING> ]
+}
+
+void UseStatement() :
+{}
+{
+  <USE> ( [ <FOR> ] <DEBUGGING> [ <ON> ] 
+  ( 
+  	(  	Identifier()
+	  	| 	<ALL> [<REFERENCES>] [<OF>] Identifier() 
+	  	|	FileName() 
+	  	| 	ProcedureName()
+  	)+ 
+  	| <ALL> <PROCEDURES> 
+  )
+  | [ <GLOBAL> ] <AFTER> [ <STANDARD> ]
+          ( 
+          	( <EXCEPTION> | <ERROR> )
+          	|  [ ( <BEGINNING> | <ENDING> ) ] [ ( <FILE> | <REEL> | <UNIT> ) ] <LABEL>
+          )
+          <PROCEDURE> [ <ON> ] ( ( FileName() [<COMMACHAR>] )+ | <INPUT> | <OUTPUT> | <I_O> | <EXTEND> )
+        )
+}
+
+void WriteStatement() :
+{}
+{
+  <WRITE> RecordName() [ <FROM> (Identifier() | Literal())]
+  [ AdvancingPhrase() ]
+  [ [ <AT> ] ( <END_OF_PAGE> | <EOP> ) StatementList() ]
+  [ <NOT> [ <AT> ] ( <END_OF_PAGE> | <EOP> ) StatementList() ]
+  [ <INVALID> [ <KEY> ] StatementList() ]
+  [ <NOT> <INVALID> [ <KEY> ] StatementList() ]
+  [ <END_WRITE> ]
+}
+
+void AdvancingPhrase() :
+{}
+{
+  ( <BEFORE> | <AFTER> ) [ <ADVANCING> ]
+  ( <PAGE>
+  | ( Identifier() | IntegerConstant() | FigurativeConstant()) [( <LINE> | <LINES> )]
+  | MnemonicName()
+  )
+}
+
+//SQL Grammar extracted from Ramanathan's SqlScript.jjt 
+
+
+void S_Identifier() :
+{ } 
+{ <S_IDENTIFIER> }
+void S_Quoted_Identifier() :
+{} 
+{ <S_QUOTED_IDENTIFIER>}
+void S_Char_Literal() :
+{  } 
+{ <S_CHAR_LITERAL> }
+
+
+void SQLStatement() ://#void :
+{}
+{
+    LOOKAHEAD(SQLCloseStatement())SQLCloseStatement()
+    |
+    LOOKAHEAD(CommitStatement())
+    CommitStatement()
+    |LOOKAHEAD([SQLUsingDMLReturn()] ( SQLDeleteStatement()| InsertStatement() |  UpdateStatement() ))
+    [SQLUsingDMLReturn()] ( SQLDeleteStatement()| InsertStatement() |  UpdateStatement() )
+    |LOOKAHEAD(FetchStatement())
+    FetchStatement()
+    |LOOKAHEAD(LockTableStatement())
+    LockTableStatement()
+    |LOOKAHEAD(SQLOpenStatement())
+    SQLOpenStatement()
+    |LOOKAHEAD(RollbackStatement())
+    RollbackStatement()
+    |LOOKAHEAD(SavepointStatement())
+    SavepointStatement()
+    |LOOKAHEAD(QueryStatement())
+    QueryStatement()
+    |LOOKAHEAD(SQLSetStatement())
+    SQLSetStatement()
+}
+
+
+void SQLCloseStatement():
+{}
+{
+    <K_CLOSE> RelObjectName() 
+}
+
+void CommitStatement():
+{}
+{
+    <K_COMMIT> [<K_WORK>] [<K_COMMENT> S_Char_Literal()] 
+}
+
+void FetchStatement():
+{}
+{ [<K_FOR> ( RelObjectName() | <S_BIND> ) ]
+    <K_FETCH> (RelObjectName())
+    <K_INTO> (RelObjectName() [[<K_INDICATOR>]<S_BIND>] |IndicatorBind()) (<COMMACHAR> (RelObjectName()  [[<K_INDICATOR>]<S_BIND>]| IndicatorBind()))* 
+}
+void IndicatorBind():
+{}
+{
+ <S_BIND>[[<K_INDICATOR>]<S_BIND>]
+}
+void LockTableStatement():
+{}
+{
+    <K_LOCK> <K_TABLE> TableReference() (<COMMACHAR> TableReference())*
+    <K_IN> LockMode() <K_MODE> [<K_NOWAIT>] 
+}
+
+void SQLOpenStatement():
+{}
+{
+    <K_OPEN> RelObjectName() [/*<LPARENCHAR>*/ <K_USING> Arguments() /*<RPARENCHAR>*/] 
+}
+
+void RollbackStatement():
+{}
+{
+    <K_ROLLBACK> [<K_WORK>] [<K_TO> [<K_SAVEPOINT>] RelObjectName()]
+    [<K_COMMENT> S_Char_Literal()] 
+}
+
+void SetTransactionStatement():
+{}
+{
+    <K_SET> <K_TRANSACTION> ((<K_READ> (<K_ONLY> | <K_WRITE>))
+                          |(<K_USE> <K_ROLLBACK> <K_SEGMENT> RelObjectName())
+                        )
+    
+}
+
+void SetVariableStatement():
+{}
+{
+    <K_SET> RelObjectName() (<K_TO>|"=") Arguments() 
+}
+
+void SQLSetStatement() ://#void :
+{}
+{
+    LOOKAHEAD(SetTransactionStatement()) SetTransactionStatement()
+|   SetVariableStatement()
+}
+
+void LockMode():
+{}
+{
+    (<K_ROW> (<K_SHARE> | <K_EXCLUSIVE>))
+|   (<K_SHARE> [<K_UPDATE> | (<K_ROW> <K_EXCLUSIVE>)])
+|   (<K_EXCLUSIVE>)
+}
+
+void SavepointStatement():
+{}
+{
+    <K_SAVEPOINT> RelObjectName() 
+}
+
+void UpdateStatement():
+{}
+{
+    <K_UPDATE> TableReference() [RelObjectName()]
+    <K_SET> ColumnValues()
+   [ <K_WHERE> ( SQLExpression() | <K_CURRENT> <K_OF> RelObjectName())] 
+}
+
+void ColumnValues():
+{}
+{
+  TableColumn() "=" UpdatedValue()
+  (<COMMACHAR> TableColumn() "=" UpdatedValue())*
+}
+
+void UpdatedValue(): // Can be a subquery or a expression
+{}
+{
+  LOOKAHEAD((<LPARENCHAR>)+ <K_SELECT>)
+  <LPARENCHAR> SelectStatement() <RPARENCHAR>
+  |
+  PlSqlExpression()
+}
+
+void InsertStatement():
+{}
+{
+    <K_INSERT> <K_INTO> TableReference()
+     [ <LPARENCHAR> TableColumn() (<COMMACHAR> TableColumn())* <RPARENCHAR> ]
+    ( <K_VALUES> <LPARENCHAR> PlSqlExpressionList() <RPARENCHAR>
+      |
+      SelectStatement()
+    )
+
+    
+}
+void SQLUsingDMLReturn() :
+{}
+{
+	<K_USING> ( <S_IDENTIFIER> | <S_BIND> )
+}
+
+void SQLDeleteStatement():
+{}
+{
+    <K_DELETE> [<K_FROM>] TableReference() [RelObjectName()]
+    [<K_WHERE> (SQLExpression() | <K_CURRENT> <K_OF> RelObjectName() ) ] 
+}
+
+
+void QueryStatement():
+{}
+{
+    SelectStatement()
+    
+}
+
+// PLSQL Expression and it's childs
+
+void PlSqlExpression():
+{}
+{
+    PlSqlExpressions()
+}
+
+void PlSqlExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlOrExpression()) PlSqlOrExpression()
+|   PlSqlAndExpressions()
+}
+
+void PlSqlOrExpression():
+{}
+{
+    PlSqlAndExpressions() (<K_OR> PlSqlAndExpressions())+
+}
+
+void PlSqlAndExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlAndExpression()) PlSqlAndExpression()
+|   PlSqlUnaryLogicalExpressions()
+}
+
+void PlSqlAndExpression():
+{}
+{
+    PlSqlUnaryLogicalExpressions() ( <K_AND> PlSqlUnaryLogicalExpressions())+
+}
+
+void PlSqlUnaryLogicalExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlUnaryLogicalExpression()) PlSqlUnaryLogicalExpression()
+|   PlSqlRelationalExpressions()
+}
+
+void PlSqlUnaryLogicalExpression():
+{}
+{
+  <K_NOT> PlSqlRelationalExpressions()
+}
+
+void PlSqlRelationalExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlRelationalExpression()) PlSqlRelationalExpression()
+|   PlSqlSimpleExpressions()
+}
+
+void PlSqlRelationalExpression():
+{}
+{
+    PlSqlSimpleExpressions()
+
+    ( Relop() PlSqlSimpleExpressions()
+      |
+      LOOKAHEAD(2) PlSqlInClause()
+      |
+      LOOKAHEAD(2) PlSqlBetweenClause()
+      |
+      LOOKAHEAD(2) PlSqlLikeClause()
+      |
+      IsNullClause()
+   )
+}
+
+void PlSqlExpressionList():
+{}
+{
+    PlSqlExpression() (<COMMACHAR> PlSqlExpression())*
+}
+
+void PlSqlInClause():
+{}
+{
+    [<K_NOT>] <K_IN> <LPARENCHAR> PlSqlExpressionList()<RPARENCHAR>
+}
+
+void PlSqlBetweenClause():
+{}
+{
+    [<K_NOT>] <K_BETWEEN> PlSqlSimpleExpressions() <K_AND> PlSqlSimpleExpressions()
+}
+
+void PlSqlLikeClause():
+{}
+{
+    [<K_NOT>] <K_LIKE> PlSqlSimpleExpressions()
+}
+
+void IsNullClause():
+{}
+{
+    <K_IS> [<K_NOT>] <K_NULL>
+}
+
+
+void PlSqlSimpleExpression():
+{}
+{
+    PlSqlSimpleExpressions() 
+}
+
+void PlSqlSimpleExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlAdditiveExpression()) PlSqlAdditiveExpression()
+|   PlSqlMultiplicativeExpressions() 
+}
+
+void PlSqlAdditiveExpression():
+{}
+{
+    PlSqlMultiplicativeExpressions() ( ((<PLUSCHAR>|<PLUSCHAR_SUBS>) | (<MINUSCHAR>|<MINUSCHAR_SUBS>) | "||")
+                                 PlSqlMultiplicativeExpressions()
+                               )+
+}
+
+void PlSqlMultiplicativeExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlMultiplicativeExpression()) PlSqlMultiplicativeExpression()
+|   PlSqlExpotentExpressions()
+}
+
+void PlSqlMultiplicativeExpression():
+{}
+{
+    PlSqlExpotentExpressions() ( ("*" | "/") PlSqlExpotentExpressions())+
+}
+
+void PlSqlExpotentExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlExpotentExpression()) PlSqlExpotentExpression()
+|   PlSqlUnaryExpressions()
+}
+
+void PlSqlExpotentExpression():
+{}
+{
+    PlSqlUnaryExpressions() ( <POW> PlSqlUnaryExpressions())+
+}
+
+void PlSqlUnaryExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(PlSqlUnaryExpression()) PlSqlUnaryExpression()
+|
+    PlSqlPrimaryExpression()
+}
+
+void PlSqlUnaryExpression():
+{}
+{
+    (((<PLUSCHAR>|<PLUSCHAR_SUBS>) | (<MINUSCHAR>|<MINUSCHAR_SUBS>)) PlSqlPrimaryExpression())
+}
+
+
+void PlSqlPrimaryExpression():
+{}
+{
+
+    <K_NULL>
+    | LOOKAHEAD(2)
+    (RelObjectName() ("%FOUND" | "%NOTFOUND" | "%ISOPEN" | "%ROWCOUNT"))
+    | LOOKAHEAD(2)
+    (RelObjectName() <LPARENCHAR> Arguments() <RPARENCHAR> )
+    |
+    (RelObjectName() [<DOTCHAR> DotObjectName()])  // cursor.var
+    |
+    (<K_SQL> ("%FOUND" | "%NOTFOUND" | "%ISOPEN" | "%ROWCOUNT"))
+    |
+    <S_NUMBER>
+    |
+    /*<S_BIND>*/ IndicatorBind()
+    |
+    <LPARENCHAR> PlSqlExpression() <RPARENCHAR>
+}
+
+/* ----------------------- PLSQL Code Block Ends here -------------- */
+
+/* ---------------- General Productions --------------------- */
+
+void TableColumn():
+{}
+{
+    // user.table.column
+    RelObjectName() [ <DOTCHAR> DotObjectName() [<DOTCHAR> DotObjectName()]]
+}
+
+void RelObjectName()  :
+{ Token t; }
+{
+    <S_IDENTIFIER>
+    //SqlValue
+|   <S_QUOTED_IDENTIFIER>
+    //SqlValue
+|  <S_CHAR_LITERAL>
+    //SqlValue
+}
+
+void DotObjectName()  :  // only put after <DOT> match
+{ Token t; }                        // here we list some char-sequences that 
+{                                   // would be returned as a special token
+    <S_IDENTIFIER>                // but they are not special here
+    
+|   <S_QUOTED_IDENTIFIER>
+    
+|   <S_CHAR_LITERAL>
+ /*   
+|   <K_ASC>                  
+    
+|   <K_BETWEEN>              
+    
+|   <K_BINARY_SQL_INTEGER>       
+    
+|   <K_BOOLEAN>              
+    
+|   <K_CHAR>                 
+    
+|   <K_CLOSE>                
+    
+|   <K_COMMENT>              
+    
+|   <K_COMMIT>               
+    
+|   <K_CONNECT>              
+    
+|   <K_CONSTANT>             
+    
+|   <K_CURRENT>              
+    
+|   <K_CURSOR>               
+    
+|   <K_DATE>                 
+    
+|   <K_DECIMAL>              
+    
+|   <K_DECLARE>              
+    
+|   <K_DELETE>               
+    
+|   <K_DESC>
+    
+|   <K_DISTINCT>
+    
+|   <K_EXCEPTION>
+    
+|   <K_EXCEPTION_INIT>
+    
+|   <K_EXCLUSIVE>
+    
+|   <K_EXISTS>
+    
+|   <K_EXIT>
+    
+|   <K_FETCH>
+    
+|   <K_FLOAT>
+    
+|   <K_FUNCTION>
+    
+|   <K_GOTO>
+    
+|   <K_GROUP>
+    
+|   <K_HAVING>
+    
+|   <K_INDEX>
+    
+|   <K_INSERT>
+    
+|   <K_SQL_INTEGER>
+    
+|   <K_INTERSECT>
+    
+|   <K_INTO>
+    
+|   <K_JOIN>
+    
+//|   <K_LEVEL>
+    
+|   <K_LIKE>
+    
+|   <K_LOOP>
+    
+|   <K_MINUS>
+    
+|   <K_MODE>
+    
+|   <K_NATURAL>
+    
+|   <K_NOWAIT>
+    
+|   <K_NUMBER>
+    
+|   <K_ONLY>
+    
+|   <K_OPEN>
+    
+|   <K_ORDER>
+    
+|   <K_OTHERS>
+    
+|   <K_PACKAGE>
+    
+|   <K_POSITIVE>
+    
+|   <K_PRAGMA>
+    
+|   <K_PRIOR>
+    
+|   <K_PROCEDURE>
+    
+|   <K_RAISE>
+    
+|   <K_READ>
+    
+|   <K_REAL>
+    
+|   <K_RECORD>
+    
+|   <K_RETURN>
+    
+|   <K_REVERSE>
+    
+|   <K_ROLLBACK>
+    
+|   <K_SAVEPOINT>
+    
+|   <K_SEGMENT>
+    
+|   <K_SELECT>
+    
+|   <K_SHARE>
+    
+|   <K_SMALLINT>
+    
+|   <K_START>
+    
+|   <K_TABLE>
+    
+|   <K_THEN>
+    
+|   <K_TRANSACTION>
+    
+|   <K_UNION>
+    
+|   <K_UPDATE>
+    
+|   <K_VALUES>
+    
+|   <K_VARCHAR2>
+    
+|   <K_VARCHAR>
+    
+|   <K_WHERE>
+    
+|   <K_WORK>
+    
+|   <K_WRITE>
+    */
+}
+
+void OracleObjectName():  // usually unused now - see above
+{}
+{
+    <S_IDENTIFIER> | <S_QUOTED_IDENTIFIER>
+}
+
+void Relop():
+{}
+{
+  "=" | "!=" | "#" | "<>" | <MORETHANCHAR> | <MORETHANOREQUAL> | <LESSTHANCHAR> | <LESSTHANOREQUAL>
+}
+
+void TableReference():
+{}
+{
+    RelObjectName() ["/" DotObjectName()]
+}
+/*
+void ParameterList():
+{}
+{
+    Parameter() ( <COMMACHAR> Parameter() )*
+}
+*/
+void NumOrID():
+{}
+{
+    <S_IDENTIFIER> | ([((<PLUSCHAR>|<PLUSCHAR_SUBS>) | (<MINUSCHAR>|<MINUSCHAR_SUBS>))] <S_NUMBER>)
+}
+/*
+void Parameter():
+{}
+{
+    RelObjectName() [ [<K_IN>] [<K_OUT>] TypeDeclaration()
+                             [(":=" | <K_DEFAULT> ) PlSqlExpression()] ]
+}
+*/
+// Just a synonym for PlSqlExpressionList for better readability
+void Arguments():
+{}
+{
+    PlSqlExpressionList()
+}
+
+/* --------------- General Productions ends here --------------- */
+
+/* ----------- SQL productions start here ----------------- */
+
+void SelectStatement():
+{}
+{
+    SelectWithoutOrder()
+    [ OrderByClause() ]
+    [ ForUpdateClause() ]
+
+}
+
+void SelectWithoutOrder():
+{}
+{
+     <K_SELECT> [ <K_ALL> | <K_DISTINCT> ] SelectList()
+    [IntoClause()]
+    FromClause()
+    [ WhereClause() ]
+    [ ConnectClause() ]
+    [ GroupByClause() ]
+    [ SetClause() ]
+}
+
+
+/* Checks for whatever follows  SELECT */
+void SelectList():
+{}
+{
+    <ASTERISKCHAR> | SelectItem() (<COMMACHAR> SelectItem())*
+}
+
+void SelectItem():
+{}
+{
+        LOOKAHEAD(SelectAllItems()) SelectAllItems()
+    |   LOOKAHEAD(SQLSimpleExpression()) SQLSimpleExpression()    // Column or Expression
+        [<S_IDENTIFIER>] // Column Alias
+|    LOOKAHEAD(FunctionCall()) FunctionCall() [AsObjectName()]
+|   LOOKAHEAD(SelectAllItems()) SelectAllItems()
+|   LOOKAHEAD(TableColumn()) TableColumn() [AsObjectName()] 
+//|   "<K_METADATA_ID>" [AsObjectName()]
+
+}
+
+void SelectAllItems():
+{}
+{   /* table.*  OR schema.table.*  */
+    LOOKAHEAD(2)
+    RelObjectName() <DOTCHAR> <ASTERISKCHAR>
+|   RelObjectName() <DOTCHAR> DotObjectName() <DOTCHAR> <ASTERISKCHAR>
+}
+
+void AsObjectName():
+{}
+{
+   RelObjectName() | <K_AS> DotObjectName()
+}
+
+void IntoClause():
+{}
+{
+   <K_INTO> IntoItem() (<COMMACHAR> IntoItem())*
+}
+
+void IntoItem():
+{}
+{
+   (RelObjectName() [<DOTCHAR> DotObjectName()] )
+|  (IndicatorBind())
+}
+
+void FromClause():
+{}
+{
+    <K_FROM> FromItem() ( <COMMACHAR> FromItem())*
+}
+
+void FromItem():
+{}
+{
+    //  TableReference()
+    //  [ <S_IDENTIFIER> ]        /** Alias Name **/
+    ( TableReference() | <LPARENCHAR> FromItemExpression() <RPARENCHAR> )
+    ( LOOKAHEAD(JoinerExpression()) JoinerExpression() 
+                             [<K_AS> AsObjectName()] 
+                         | [AsObjectName()])
+}
+
+void FromItemExpression():
+{}
+{
+    ( TableReference() | <LPARENCHAR> FromItemExpression() <RPARENCHAR>) 
+     (JoinerExpression())*
+    | SelectStatement()
+}
+
+void JoinerExpression():
+{}
+{
+   <K_JOIN> TableReference() [JoinWhereClause()]
+|  LOOKAHEAD(2) RelObjectName() <K_JOIN> TableReference() [JoinWhereClause()]
+}
+
+void JoinWhereClause():
+{}
+{
+    <K_ON> SQLExpression()
+}
+
+void WhereClause():
+{}
+{
+    <K_WHERE> SQLExpression()
+}
+
+void ConnectClause():
+{}
+{
+    // The following grammar will take 2 "START WITH" expressions
+    // which is not correct. But alright, because only valid statements
+    // will be given.
+   ([<K_START> <K_WITH> SQLExpression()] <K_CONNECT> <K_BY> SQLExpression()
+    [<K_START> <K_WITH> SQLExpression()])
+}
+
+void GroupByClause():
+{}
+{
+    <K_GROUP> <K_BY> SQLExpressionList()
+    [<K_HAVING> SQLExpression()]
+}
+
+void SetClause():
+{}
+{
+    ((<K_UNION> [<K_ALL>]) | <K_INTERSECT> | <K_MINUS>)
+    // LOOKAHEAD(<LPARENCHAR>) because Oracle supports <LPARENCHAR> after a UNION
+    (LOOKAHEAD(<LPARENCHAR>) (<LPARENCHAR> SelectStatement() <RPARENCHAR>)
+        | SelectStatement()
+    )
+}
+
+void OrderByClause():
+{}
+{
+    <K_ORDER> <K_BY> SQLSimpleExpression() [<K_ASC> | <K_DESC> ]
+        (<COMMACHAR> SQLSimpleExpression() [<K_ASC> | <K_DESC>])*
+}
+
+void ForUpdateClause():
+{}
+{
+    <K_FOR> <K_UPDATE> [<K_OF> TableColumn() (<COMMACHAR> TableColumn())*]
+}
+
+void SQLExpression():
+{}
+{
+    SQLOrExpressions()
+}
+
+void SQLOrExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(SQLOrExpression()) SQLOrExpression()
+|   SQLAndExpressions()
+}
+
+void SQLOrExpression():
+{}
+{
+    SQLAndExpressions() (<K_OR> SQLAndExpressions())+
+}
+
+
+void SQLAndExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(SQLAndExpression()) SQLAndExpression()
+|   SQLUnaryLogicalExpressions()
+}
+
+void SQLAndExpression():
+{}
+{
+    SQLUnaryLogicalExpressions() ( <K_AND> SQLUnaryLogicalExpressions())+
+}
+
+void SQLUnaryLogicalExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(2) ExistsClause()
+|   SQLRelationalExpressions()
+}
+
+void ExistsClause():
+{}
+{
+    [<K_NOT>] <K_EXISTS> <LPARENCHAR> SubQuery() <RPARENCHAR>
+}
+
+void SQLRelationalExpressions()  :
+{}
+{
+    LOOKAHEAD(SQLRelationalExpression()) SQLRelationalExpression()
+|  
+    /* Only after looking past <LPARENCHAR>, Expression() and <COMMACHAR> we will know that
+       it is expression list */
+    (LOOKAHEAD(SQLRelopExpression()) SQLRelopExpression()
+|
+     LOOKAHEAD(<LPARENCHAR> SQLSimpleExpression() <COMMACHAR>) <LPARENCHAR> SQLExpressionList() <RPARENCHAR>
+|
+    (LOOKAHEAD(2) SQLPriorExpression() | SQLSimpleExpressions())
+)
+
+}
+
+void SQLRelationalExpression() :
+{}
+{
+    /* Only after looking past <LPARENCHAR>, Expression() and <COMMACHAR> we will know that
+       it is expression list */
+
+(    LOOKAHEAD(<LPARENCHAR> SQLSimpleExpression() <COMMACHAR>) <LPARENCHAR> SQLExpressionList() <RPARENCHAR>
+|
+    (LOOKAHEAD(2) SQLPriorExpression() | SQLSimpleExpressions())
+)
+
+    /* Lookahead(2) is required because of NOT IN,NOT BETWEEN and NOT LIKE */
+    //(  SQLRelationalOperatorExpression() 
+(  LOOKAHEAD(2) (SQLInClause())
+|  LOOKAHEAD(2) (SQLBetweenClause())
+|  LOOKAHEAD(2) (SQLLikeClause())
+|  IsNullClause()
+)
+}
+
+void SQLPriorExpression():
+{}
+{
+    [<K_NOT>] <K_PRIOR> SQLSimpleExpressions()
+}
+
+void SQLExpressionList():
+{}
+{
+    SQLSimpleExpression() (<COMMACHAR> SQLSimpleExpression())*
+}
+
+void SQLRelopExpression():
+{}
+{
+(    LOOKAHEAD(<LPARENCHAR> SQLSimpleExpression() <COMMACHAR>) <LPARENCHAR> SQLExpressionList() <RPARENCHAR>
+|
+    (LOOKAHEAD(2) SQLPriorExpression() | SQLSimpleExpressions())
+)
+
+
+    Relop()
+
+    /* Only after seeing an ANY/ALL or <LPARENCHAR> followed by a SubQuery() we can
+    determine that is is a sub-query
+    */
+    (   LOOKAHEAD(<K_ANY> | <K_ALL> | <LPARENCHAR> <K_SELECT>)
+        ([<K_ALL> | <K_ANY>] <LPARENCHAR> SubQuery() <RPARENCHAR>)
+    |
+        LOOKAHEAD(2) SQLPriorExpression()
+    |    
+        SQLSimpleExpressions()
+    )
+}
+
+void SQLRelationalOperatorExpression():
+{}
+{
+
+    Relop()
+
+    /* Only after seeing an ANY/ALL or <LPARENCHAR> followed by a SubQuery() we can
+    determine that is is a sub-query
+    */
+    (   LOOKAHEAD(<K_ANY> | <K_ALL> | <LPARENCHAR> <K_SELECT>)
+        ([<K_ALL> | <K_ANY>] <LPARENCHAR> SubQuery() <RPARENCHAR>)
+    |
+        LOOKAHEAD(2) SQLPriorExpression()
+    |    
+        SQLSimpleExpression()
+    )
+}
+
+void SQLInClause():
+{}
+{
+    [<K_NOT>] <K_IN> <LPARENCHAR> (SQLExpressionList() | SubQuery()) <RPARENCHAR>
+}
+
+void SQLBetweenClause():
+{}
+{
+    [<K_NOT>] <K_BETWEEN> SQLSimpleExpression() <K_AND> SQLSimpleExpression()
+}
+
+void SQLLikeClause():
+{}
+{
+    [<K_NOT>] <K_LIKE> SQLSimpleExpression()
+}
+
+void SQLSimpleExpression():
+{}
+{
+    SQLSimpleExpressions()
+}
+
+void SQLSimpleExpressions() ://#void :
+{}
+{
+    SQLAdditiveExpressions()
+}
+
+void SQLAdditiveExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(SQLAdditiveExpression()) SQLAdditiveExpression()
+|
+    SQLMultiplicativeExpressions()
+}
+
+void SQLAdditiveExpression():
+{}
+{
+    SQLMultiplicativeExpressions() ( ((<PLUSCHAR_SUBS> | <PLUSCHAR>) | (<MINUSCHAR_SUBS> | <MINUSCHAR>) | <CONCAT>) SQLMultiplicativeExpressions())+
+}
+
+void SQLMultiplicativeExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(SQLMultiplicativeExpression()) SQLMultiplicativeExpression()
+|   SQLExpotentExpressions()
+}
+
+void SQLMultiplicativeExpression():
+{}
+{
+    SQLExpotentExpressions() ( (<ASTERISKCHAR> | <SLASHCHAR>) SQLExpotentExpressions())+
+}
+
+void SQLExpotentExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(SQLExpotentExpression()) SQLExpotentExpression()
+|   SQLUnaryExpressions()
+}
+
+void SQLExpotentExpression():
+{}
+{
+    SQLUnaryExpressions() ( <POW> SQLUnaryExpressions())+
+}
+
+void SQLUnaryExpressions() ://#void :
+{}
+{
+    LOOKAHEAD(SQLUnaryExpression()) SQLUnaryExpression()
+|   SQLPrimaryExpression()
+}
+
+void SQLUnaryExpression():
+{}
+{
+    ((<PLUSCHAR>|<PLUSCHAR_SUBS>) | (<MINUSCHAR>|<MINUSCHAR_SUBS>)) SQLPrimaryExpression()
+}
+
+void SQLPrimaryExpression():
+{}
+{
+
+    <K_NULL>
+|    LOOKAHEAD(FunctionCall()) FunctionCall()
+|    LOOKAHEAD(OuterJoinExpression()) OuterJoinExpression()
+|    TableColumn() 	// |   <S_CHAR_LITERAL>
+|   <S_NUMBER>
+|   IndicatorBind()//<S_BIND>
+|   <LPARENCHAR> SQLExpression() <RPARENCHAR>
+}
+
+void FunctionCall():
+{}
+{
+    // function(args)
+    // package.function(args)
+    // user.package.function(args)
+
+    // however note that "distinct/all/*" can be only used with
+    // inbuilt functions but no distinction is made between inbuilt
+    // function and custom functions
+
+    RelObjectName() [ <DOTCHAR> DotObjectName() [<DOTCHAR> DotObjectName()]]
+    <LPARENCHAR> [ [<K_DISTINCT> | <K_ALL>] (SQLArguments() | <ASTERISKCHAR>) ] <RPARENCHAR>
+}
+
+void SQLArguments():
+{}
+{
+    SQLExpressionList()
+}
+
+
+void OuterJoinExpression():
+{}
+{
+    // user.table.col
+    RelObjectName() [ <DOTCHAR> DotObjectName() [<DOTCHAR> DotObjectName()]]
+    <LPARENCHAR> (<PLUSCHAR>|<PLUSCHAR_SUBS>) <RPARENCHAR>
+}
+
+void SubQuery():
+{}
+{
+    SelectWithoutOrder()
+}
+
+JAVACODE
+void error_skipto(int kind) {
+	if(jj_kind<0)
+		jj_kind=0;
+		
+	ParseException e = generateParseException();  // generate the exception object.
+	RESConfig.getInstance().setInError(true);
+  	Token t = token_source.getNextToken();//jj_consume_token(t.kind);
+	//System.out.println(t.image+","+t.beginLine);
+	System.out.println(e.toString());  // print the error message
+	int previousLine=-1,previousColumn=-1;
+  	do {
+	    t = token_source.getNextToken();//jj_consume_token(t.kind);
+		//System.out.println(t.image+","+t.beginLine);
+	    if(t.beginLine==previousLine&&t.beginColumn==previousColumn) break;
+	    previousLine=t.beginLine;previousColumn=t.beginColumn;
+  	} while (t.kind != kind);
+  
+    // The above loop consumes tokens all the way up to a token of
+    // "kind".  We use a do-while loop rather than a while because the
+    // current token is the one immediately before the erroneous token
+    // (in our case the token immediately before what should have been
+    // "if"/"while".
+}
+
+JAVACODE
+SkipToEndExec SkipToEndExec() {
+	SkipToEndExec list = new SkipToEndExec();
+	 do {
+	 	Token t = getToken(1);
+	 	if(t.kind==END_EXEC) break;
+		Token n1 = jj_consume_token(t.kind);
+        list.addNode(JTBToolkit.makeNodeToken(n1));
+	} while(true);
+	return list;
+}

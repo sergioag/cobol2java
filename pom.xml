@@ -1,0 +1,51 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.erpgenerator</groupId>
+    <artifactId>cobol2java</artifactId>
+    <version>2.0</version>
+    <packaging>jar</packaging>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>javacc-maven-plugin</artifactId>
+                <version>2.6</version>
+                <executions>
+                    <execution>
+                        <id>jtb-javacc</id>
+                        <goals>
+                            <goal>jtb-javacc</goal>
+                        </goals>
+                        <configuration>
+                            <javadocFriendlyComments>true</javadocFriendlyComments>
+                            <supressErrorChecking>true</supressErrorChecking>
+                            <packageName>com.res.cobol</packageName>
+                            <descriptiveFieldNames>true</descriptiveFieldNames>
+                            <parentPointers>true</parentPointers>
+                            <specialTokens>true</specialTokens>
+                            <printer>true</printer>
+                            <nodeParentClass>com.res.cobol.RESNode</nodeParentClass>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>2.3</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                            <mainClass>com.res.cobol.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
